@@ -1,6 +1,8 @@
 """Zensus Collector CLI."""
 import asyncio
 import csv
+import tempfile
+import zipfile
 from pathlib import Path
 from typing import Optional
 
@@ -175,90 +177,210 @@ def collect(
         ),
 ) -> None:
     """Download all Zensus 2022 gitterdaten (grid data) files."""
+    # Mak sure our cache directory exists
+    create_cache_dir()
+
     # Create output directory if it doesn't exist
     asyncio.run(collect_wrapper(tables, skip_existing))
 
 
 async def collect_wrapper(tables, skip_existing):
-    create_cache_dir()
-
-    rprint(f"[cyan]Downloading {len(GITTERDATEN_FILES)} gitterdaten files to {CACHE}[/cyan]")
-
-    with Progress(
-            SpinnerColumn(),
-            *Progress.get_default_columns(),
-            DownloadColumn(),
-            TransferSpeedColumn(),
-    ) as progress:
-        jobs = []
-
-        http_client = httpx.AsyncClient()
-        fetch_client = FetchClient(
-            http_client, Path(CACHE), progress=progress, skip_existing=skip_existing
-        )
-
-        for filename, url in GITTERDATEN_FILES:
-            if tables != ["all"] and filename not in tables:
-                continue
-            jobs.append(fetch_client.fetch(url, filename))
-
-        await asyncio.gather(*jobs)
-
-    rprint("\n[bold cyan]Download Summary:[/bold cyan]")
-    rprint(f"  [green]✓ Downloaded: {fetch_client.success}[/green]")
-    rprint(f"  [yellow]⊘ Skipped: {fetch_client.skipped}[/yellow]")
-    rprint(f"  [red]✗ Failed: {fetch_client.failed}[/red]")
-
-
-class FetchClient:
     """
-    Async client that optionally supports displaying a progress bar.
+    Encapsulate all async opertations for the collect command
     """
-    def __init__(self, client: httpx.AsyncClient, output_folder: Path, progress: Progress | None = None, semaphore: int = 10,
-                 skip_existing: bool = True) -> None:
+
+    files_to_import = tuple((
+        (filename, url) for filename, url in GITTERDATEN_FILES
+         if tables == ["all"] or filename in tables)
+    )
+
+    rprint(f"[cyan]Downloading and importing {len(files_to_import)} gitterdaten files[/cyan]")
+
+    http_client = httpx.AsyncClient()
+
+    try:
+        with Progress() as progress:
+            jobs = []
+
+            fetch_manager = FetchManager(
+                http_client, Path(CACHE), total=len(files_to_import), progress=progress, skip_existing=skip_existing
+            )
+
+            for filename, url in files_to_import:
+                if tables != ["all"] and filename not in tables:
+                    continue
+                await fetch_manager.fetch_queue.put((url, filename))
+
+            # Add sentinel values for each fetch worker (one per worker)
+            num_fetch_workers = 10
+            for _ in range(num_fetch_workers):
+                await fetch_manager.fetch_queue.put(None)
+
+            for _ in range(num_fetch_workers):
+                jobs.append(fetch_manager.fetch_worker())
+
+            jobs.append(fetch_manager.extract_worker())
+            jobs.append(fetch_manager.database_worker())
+
+            # Add coordinator to manage pipeline shutdown
+            jobs.append(fetch_manager.coordinator())
+
+            await asyncio.gather(*jobs)
+
+        rprint("\n[bold cyan]Download Summary:[/bold cyan]")
+        rprint(f"  [green]✓ Downloaded: {fetch_manager.success}[/green]")
+        rprint(f"  [yellow]⊘ Skipped: {fetch_manager.skipped}[/yellow]")
+        rprint(f"  [red]✗ Failed: {fetch_manager.failed}[/red]")
+    finally:
+        await http_client.aclose()
+
+
+class FetchManager:
+    """
+    Manager that coordinates file downloads, progress display and record insertion into the database.
+    """
+
+    #: Pattern used to find CSV files in downloaded zip files
+    CSV_FILE_MATCH_PATTERN = "*Gitter.csv"
+
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        output_folder: Path,
+        total: int | None = None,
+        progress: Progress | None = None,
+        semaphore: int = 10,
+        skip_existing: bool = True,
+    ) -> None:
         self.client = client
         self.output_folder = output_folder
         self.semaphore = asyncio.Semaphore(semaphore)
         self.progress = progress
         self.skip_existing = skip_existing
+
+        # Progress bar tasks
+        self.fetch_task = progress.add_task(f"[cyan]Downloading...[/cyan]", total=total)
+        self.extract_task = progress.add_task(f"[cyan]Extracting...[/cyan]", total=total)
+        self.database_task = progress.add_task(f"[cyan]Importing...[/cyan]", total=total * 3)
+
+        # File processing statistics
         self.failed = 0
         self.success = 0
         self.skipped = 0
 
-    async def fetch(self, url: str, filename: Path) -> None:
+        self.fetch_queue = asyncio.Queue()
+        self.extract_queue = asyncio.Queue()
+        self.database_queue = asyncio.Queue()
+
+    async def fetch_worker(self) -> None:
         """
         Fetch single file and write it to `self.output_folder` location
         """
-        output_path = Path(self.output_folder) / filename
+        while True:
+            fetch_item = await self.fetch_queue.get()
 
-        # Skip if file exists and skip_existing is True
-        if output_path.exists() and self.skip_existing:
-            rprint(f"[yellow]⊘ Skipping {filename} (already exists)[/yellow]")
-            self.skipped += 1
-            return
+            if fetch_item is None:
+                # Sentinel received - this worker is done
+                self.fetch_queue.task_done()
+                break
 
-        task = self.progress.add_task(f"[cyan]Downloading {filename}...", total=None)
+            url, filename = fetch_item
 
-        try:
-            async with self.semaphore:
-                async with self.client.stream("GET", url, follow_redirects=True, timeout=60.0) as response:
-                    response.raise_for_status()
-                    total = int(response.headers.get("content-length", 0))
-                    self.progress.update(task, total=total if total > 0 else None)
+            output_path = Path(self.output_folder) / filename
 
-                    async with aiofiles.open(output_path, "wb") as f:
-                        async for chunk in response.aiter_bytes(chunk_size=8192):
-                            await f.write(chunk)
-                            self.progress.update(task, advance=len(chunk))
+            # Skip if file exists and skip_existing is True
+            if output_path.exists() and self.skip_existing:
+                await self.extract_queue.put(output_path)
+                self.progress.update(self.fetch_task, advance=1)
+                self.skipped += 1
+                self.fetch_queue.task_done()
+                continue
 
-                self.progress.update(task, description=f"[green]✓ {filename}")
-                self.progress.remove_task(task)
-                self.success += 1
+            try:
+                async with self.semaphore:  # TODO: this probably isn't needed any more
+                    async with self.client.stream("GET", url, follow_redirects=True, timeout=60.0) as response:
+                        response.raise_for_status()
 
-        except Exception as e:
-            self.progress.update(task, description=f"[red]✗ {filename} (error)")
-            rprint(f"[red]Error downloading {filename}: {e!s}[/red]")
-            self.failed += 1
+                        async with aiofiles.open(output_path, "wb") as f:
+                            async for chunk in response.aiter_bytes(chunk_size=8192):
+                                await f.write(chunk)
+        
+                            self.progress.update(self.fetch_task, advance=1)
+                            await self.extract_queue.put(output_path)
+
+                    self.success += 1
+
+            except Exception as e:
+                self.failed += 1
+            finally:
+                self.fetch_queue.task_done()
+
+    async def extract_worker(self):
+        """
+        Worker that unzips files from the zipfile queue.
+
+        TODO: Add a cache for extract files so we can skip them if they have been extracted
+        """
+        while True:
+            zip_file = await self.extract_queue.get()
+
+            if zip_file is None:
+                # Sentinel value that terminates `database_worker`
+                self.extract_queue.task_done()
+                break
+
+            try:
+                with tempfile.TemporaryDirectory() as extract_to:
+                    await asyncio.to_thread(
+                        zipfile.ZipFile(zip_file).extractall,
+                        extract_to
+                    )
+
+                    for csv_file in Path(extract_to).rglob(self.CSV_FILE_MATCH_PATTERN):
+                        await self.database_queue.put(csv_file)
+
+                    self.progress.update(self.extract_task, advance=1)
+    
+            finally:
+                self.extract_queue.task_done()
+
+    async def database_worker(self):
+        """Worker that loads CSV files into the database"""
+        while True:
+            csv_file = await self.database_queue.get()
+
+            if csv_file is None:
+                self.database_queue.task_done()
+                break
+
+            try:
+                self.progress.update(self.database_task, advance=1)
+
+                # ... do database stuff
+            finally:
+                self.database_queue.task_done()
+
+    async def coordinator(self):
+        """
+        Coordinator that manages the pipeline shutdown.
+
+        Waits for all fetch workers to complete, then signals extract worker.
+        Waits for extract worker to complete, then signals database worker.
+        """
+        # Wait for all items in fetch queue to be processed
+        await self.fetch_queue.join()
+
+        # Signal extract worker to stop
+        await self.extract_queue.put(None)
+
+        # Wait for all items in extract queue to be processed
+        await self.extract_queue.join()
+
+        # Signal database worker to stop
+        await self.database_queue.put(None)
+
+        # Wait for all items in database queue to be processed
+        await self.database_queue.join()
 
 
 @app.command()
