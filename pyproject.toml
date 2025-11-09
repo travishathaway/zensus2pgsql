@@ -10,8 +10,9 @@ readme = "README.md"
 authors = [
   { name = "Travis Hathaway", email = "travis.j.hathaway@gmail.com" },
 ]
-requires-python = ">=3.13,<4.0"
+requires-python = ">=3.13,<4.0"  # TODO: this should probably 3.10+
 dependencies = [
+  "aiocsv>=1.4.0",
   "aiofiles>=25.1.0",
   "asyncpg>=0.30.0",
   "httpx (>=0.28.1)",
