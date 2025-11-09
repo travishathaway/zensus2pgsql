@@ -1,17 +1,17 @@
 """Zensus Collector CLI."""
+
 import asyncio
 import csv
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import Optional
 
 import aiofiles
 import httpx
 import psycopg
 import typer
 from rich import print as rprint
-from rich.progress import Progress, SpinnerColumn, DownloadColumn, TransferSpeedColumn
+from rich.progress import Progress
 
 from ..cache import CACHE, create_cache_dir
 
@@ -80,7 +80,7 @@ def detect_column_type(cursor, table_name: str, column_name: str) -> str:
     # Replace commas with dots for German decimal format
     # Check if all non-null, non-empty values can be cast to numeric types
     cursor.execute(
-        f"""
+        rf"""
         SELECT
             COUNT(*) as total,
             COUNT(CASE WHEN {column_name} IS NOT NULL AND {column_name} != '' THEN 1 END) as non_empty,
@@ -118,63 +118,188 @@ def detect_column_type(cursor, table_name: str, column_name: str) -> str:
 
 # All gitterdaten files from the Zensus 2022 publication page
 GITTERDATEN_FILES = [
-    ("Zensus2022_Bevoelkerungszahl.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Zensus2022_Bevoelkerungszahl.zip"),
-    ("Deutsche_Staatsangehoerige_ab_18_Jahren.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Deutsche_Staatsangehoerige_ab_18_Jahren.zip"),
-    ("Auslaenderanteil_in_Gitterzellen.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Auslaenderanteil_in_Gitterzellen.zip"),
-    ("Auslaenderanteil_ab_18_Jahren.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Auslaenderanteil_ab_18_Jahren.zip"),
-    ("Zensus2022_Geburtsland_Gruppen_in_Gitterzellen.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Zensus2022_Geburtsland_Gruppen_in_Gitterzellen.zip"),
-    ("Zensus2022_Staatsangehoerigkeit_in_Gitterzellen.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Zensus2022_Staatsangehoerigkeit_in_Gitterzellen.zip"),
-    ("Zensus2022_Staatsangehoerigkeit_Gruppen_in_Gitterzellen.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Zensus2022_Staatsangehoerigkeit_Gruppen_in_Gitterzellen.zip"),
-    ("Zahl_der_Staatsangehoerigkeiten.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Zahl_der_Staatsangehoerigkeiten.zip"),
-    ("Durchschnittsalter_in_Gitterzellen.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Durchschnittsalter_in_Gitterzellen.zip"),
-    ("Alter_in_5_Altersklassen.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Alter_in_5_Altersklassen.zip"),
-    ("Alter_in_10er-Jahresgruppen.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Alter_in_10er-Jahresgruppen.zip"),
-    ("Anteil_unter_18-jaehrige_in_Gitterzellen.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Anteil_unter_18-jaehrige_in_Gitterzellen.zip"),
-    ("Anteil_ab_65-jaehrige_in_Gitterzellen.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Anteil_ab_65-jaehrige_in_Gitterzellen.zip"),
-    ("Alter_in_infrastrukturellen_Altersgruppen.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Alter_in_infrastrukturellen_Altersgruppen.zip"),
-    ("Familienstand_in_Gitterzellen.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Familienstand_in_Gitterzellen.zip"),
+    (
+        "Zensus2022_Bevoelkerungszahl.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Zensus2022_Bevoelkerungszahl.zip",
+    ),
+    (
+        "Deutsche_Staatsangehoerige_ab_18_Jahren.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Deutsche_Staatsangehoerige_ab_18_Jahren.zip",
+    ),
+    (
+        "Auslaenderanteil_in_Gitterzellen.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Auslaenderanteil_in_Gitterzellen.zip",
+    ),
+    (
+        "Auslaenderanteil_ab_18_Jahren.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Auslaenderanteil_ab_18_Jahren.zip",
+    ),
+    (
+        "Zensus2022_Geburtsland_Gruppen_in_Gitterzellen.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Zensus2022_Geburtsland_Gruppen_in_Gitterzellen.zip",
+    ),
+    (
+        "Zensus2022_Staatsangehoerigkeit_in_Gitterzellen.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Zensus2022_Staatsangehoerigkeit_in_Gitterzellen.zip",
+    ),
+    (
+        "Zensus2022_Staatsangehoerigkeit_Gruppen_in_Gitterzellen.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Zensus2022_Staatsangehoerigkeit_Gruppen_in_Gitterzellen.zip",
+    ),
+    (
+        "Zahl_der_Staatsangehoerigkeiten.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Zahl_der_Staatsangehoerigkeiten.zip",
+    ),
+    (
+        "Durchschnittsalter_in_Gitterzellen.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Durchschnittsalter_in_Gitterzellen.zip",
+    ),
+    (
+        "Alter_in_5_Altersklassen.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Alter_in_5_Altersklassen.zip",
+    ),
+    (
+        "Alter_in_10er-Jahresgruppen.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Alter_in_10er-Jahresgruppen.zip",
+    ),
+    (
+        "Anteil_unter_18-jaehrige_in_Gitterzellen.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Anteil_unter_18-jaehrige_in_Gitterzellen.zip",
+    ),
+    (
+        "Anteil_ab_65-jaehrige_in_Gitterzellen.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Anteil_ab_65-jaehrige_in_Gitterzellen.zip",
+    ),
+    (
+        "Alter_in_infrastrukturellen_Altersgruppen.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Alter_in_infrastrukturellen_Altersgruppen.zip",
+    ),
+    (
+        "Familienstand_in_Gitterzellen.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Familienstand_in_Gitterzellen.zip",
+    ),
     ("Religion.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Religion.zip"),
-    ("Durchschnittliche_Haushaltsgroesse_in_Gitterzellen.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Durchschnittliche_Haushaltsgroesse_in_Gitterzellen.zip"),
-    ("Zensus2022_Groesse_des_privaten_Haushalts_in_Gitterzellen.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Zensus2022_Groesse_des_privaten_Haushalts_in_Gitterzellen.zip"),
-    ("Typ_der_Kernfamilie_nach_Kindern.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Typ_der_Kernfamilie_nach_Kindern.zip"),
-    ("Groesse_der_Kernfamilie.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Groesse_der_Kernfamilie.zip"),
-    ("Typ_des_privaren_Haushalts_Lebensform.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Typ_des_privaren_Haushalts_Lebensform.zip"),
-    ("Typ_des_privaten_Haushalts_Familien.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Typ_des_privaten_Haushalts_Familien.zip"),
-    ("Seniorenstatus_eines_privaten_Haushalts.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Seniorenstatus_eines_privaten_Haushalts.zip"),
-    ("Zensus2022_Durchschn_Nettokaltmiete.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Zensus2022_Durchschn_Nettokaltmiete.zip"),
-    ("Durchschnittliche_Nettokaltmiete_und_Anzahl_der_Wohnungen.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Durchschnittliche_Nettokaltmiete_und_Anzahl_der_Wohnungen.zip"),
-    ("Eigentuemerquote_in_Gitterzellen.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Eigentuemerquote_in_Gitterzellen.zip"),
-    ("Leerstandsquote_in_Gitterzellen.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Leerstandsquote_in_Gitterzellen.zip"),
-    ("Marktaktive_Leerstandsquote_in_Gitterzellen.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Marktaktive_Leerstandsquote_in_Gitterzellen.zip"),
-    ("Durchschnittliche_Wohnflaeche_je_Bewohner_in_Gitterzellen.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Durchschnittliche_Wohnflaeche_je_Bewohner_in_Gitterzellen.zip"),
-    ("Durchschnittliche_Flaeche_je_Wohnung_in_Gitterzellen.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Durchschnittliche_Flaeche_je_Wohnung_in_Gitterzellen.zip"),
-    ("Flaeche_der_Wohnung_10m2_Intervalle.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Flaeche_der_Wohnung_10m2_Intervalle.zip"),
-    ("Wohnungen_nach_Gebaeudetyp_Groesse.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Wohnungen_nach_Gebaeudetyp_Groesse.zip"),
-    ("Wohnungen_nach_Zahl_der_Raeume.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Wohnungen_nach_Zahl_der_Raeume.zip"),
-    ("Gebaeude_nach_Baujahr_Jahrzehnte.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Gebaeude_nach_Baujahr_Jahrzehnte.zip"),
-    ("Gebaeude_nach_Baujahr_in_Mikrozensus_Klassen.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Gebaeude_nach_Baujahr_in_Mikrozensus_Klassen.zip"),
-    ("Gebaeude_nach_Anzahl_der_Wohnungen_im_Gebaeude.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Gebaeude_nach_Anzahl_der_Wohnungen_im_Gebaeude.zip"),
-    ("Gebaeude_mit_Wohnraum_nach_Gebaeudetyp_Groesse.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Gebaeude_mit_Wohnraum_nach_Gebaeudetyp_Groesse.zip"),
-    ("Zensus2022_Heizungsart.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Zensus2022_Heizungsart.zip"),
-    ("Gebaeude_mit_Wohnraum_nach_ueberwiegender_Heizungsart.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Gebaeude_mit_Wohnraum_nach_ueberwiegender_Heizungsart.zip"),
-    ("Zensus2022_Energietraeger.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Zensus2022_Energietraeger.zip"),
-    ("Gebaeude_mit_Wohnraum_nach_Energietraeger_der_Heizung.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Gebaeude_mit_Wohnraum_nach_Energietraeger_der_Heizung.zip"),
-    ("Gebaeude_nach_Baujahresklassen_in_Gitterzellen.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Gebaeude_nach_Baujahresklassen_in_Gitterzellen.zip"),
-    ("Auslaenderanteil_EU_nichtEU_Gitterzellen.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Auslaenderanteil_EU_nichtEU_Gitterzellen.zip"),
-    ("Shapefile_Zensus2022.zip", "https://www.destatis.de/static/DE/zensus/gitterdaten/Shapefile_Zensus2022.zip"),
+    (
+        "Durchschnittliche_Haushaltsgroesse_in_Gitterzellen.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Durchschnittliche_Haushaltsgroesse_in_Gitterzellen.zip",
+    ),
+    (
+        "Zensus2022_Groesse_des_privaten_Haushalts_in_Gitterzellen.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Zensus2022_Groesse_des_privaten_Haushalts_in_Gitterzellen.zip",
+    ),
+    (
+        "Typ_der_Kernfamilie_nach_Kindern.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Typ_der_Kernfamilie_nach_Kindern.zip",
+    ),
+    (
+        "Groesse_der_Kernfamilie.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Groesse_der_Kernfamilie.zip",
+    ),
+    (
+        "Typ_des_privaren_Haushalts_Lebensform.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Typ_des_privaren_Haushalts_Lebensform.zip",
+    ),
+    (
+        "Typ_des_privaten_Haushalts_Familien.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Typ_des_privaten_Haushalts_Familien.zip",
+    ),
+    (
+        "Seniorenstatus_eines_privaten_Haushalts.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Seniorenstatus_eines_privaten_Haushalts.zip",
+    ),
+    (
+        "Zensus2022_Durchschn_Nettokaltmiete.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Zensus2022_Durchschn_Nettokaltmiete.zip",
+    ),
+    (
+        "Durchschnittliche_Nettokaltmiete_und_Anzahl_der_Wohnungen.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Durchschnittliche_Nettokaltmiete_und_Anzahl_der_Wohnungen.zip",
+    ),
+    (
+        "Eigentuemerquote_in_Gitterzellen.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Eigentuemerquote_in_Gitterzellen.zip",
+    ),
+    (
+        "Leerstandsquote_in_Gitterzellen.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Leerstandsquote_in_Gitterzellen.zip",
+    ),
+    (
+        "Marktaktive_Leerstandsquote_in_Gitterzellen.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Marktaktive_Leerstandsquote_in_Gitterzellen.zip",
+    ),
+    (
+        "Durchschnittliche_Wohnflaeche_je_Bewohner_in_Gitterzellen.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Durchschnittliche_Wohnflaeche_je_Bewohner_in_Gitterzellen.zip",
+    ),
+    (
+        "Durchschnittliche_Flaeche_je_Wohnung_in_Gitterzellen.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Durchschnittliche_Flaeche_je_Wohnung_in_Gitterzellen.zip",
+    ),
+    (
+        "Flaeche_der_Wohnung_10m2_Intervalle.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Flaeche_der_Wohnung_10m2_Intervalle.zip",
+    ),
+    (
+        "Wohnungen_nach_Gebaeudetyp_Groesse.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Wohnungen_nach_Gebaeudetyp_Groesse.zip",
+    ),
+    (
+        "Wohnungen_nach_Zahl_der_Raeume.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Wohnungen_nach_Zahl_der_Raeume.zip",
+    ),
+    (
+        "Gebaeude_nach_Baujahr_Jahrzehnte.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Gebaeude_nach_Baujahr_Jahrzehnte.zip",
+    ),
+    (
+        "Gebaeude_nach_Baujahr_in_Mikrozensus_Klassen.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Gebaeude_nach_Baujahr_in_Mikrozensus_Klassen.zip",
+    ),
+    (
+        "Gebaeude_nach_Anzahl_der_Wohnungen_im_Gebaeude.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Gebaeude_nach_Anzahl_der_Wohnungen_im_Gebaeude.zip",
+    ),
+    (
+        "Gebaeude_mit_Wohnraum_nach_Gebaeudetyp_Groesse.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Gebaeude_mit_Wohnraum_nach_Gebaeudetyp_Groesse.zip",
+    ),
+    (
+        "Zensus2022_Heizungsart.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Zensus2022_Heizungsart.zip",
+    ),
+    (
+        "Gebaeude_mit_Wohnraum_nach_ueberwiegender_Heizungsart.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Gebaeude_mit_Wohnraum_nach_ueberwiegender_Heizungsart.zip",
+    ),
+    (
+        "Zensus2022_Energietraeger.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Zensus2022_Energietraeger.zip",
+    ),
+    (
+        "Gebaeude_mit_Wohnraum_nach_Energietraeger_der_Heizung.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Gebaeude_mit_Wohnraum_nach_Energietraeger_der_Heizung.zip",
+    ),
+    (
+        "Gebaeude_nach_Baujahresklassen_in_Gitterzellen.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Gebaeude_nach_Baujahresklassen_in_Gitterzellen.zip",
+    ),
+    (
+        "Auslaenderanteil_EU_nichtEU_Gitterzellen.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Auslaenderanteil_EU_nichtEU_Gitterzellen.zip",
+    ),
+    (
+        "Shapefile_Zensus2022.zip",
+        "https://www.destatis.de/static/DE/zensus/gitterdaten/Shapefile_Zensus2022.zip",
+    ),
 ]
 
 
 @app.command()
 def collect(
-        tables: list[str] = typer.Argument(
-            ["all"]
-        ),
-        skip_existing: bool = typer.Option(
-            True,
-            "--skip-existing/--overwrite",
-            help="Skip files that already exist",
-        ),
+    tables: list[str] = typer.Argument(["all"]),
+    skip_existing: bool = typer.Option(
+        True, "--skip-existing/--overwrite", help="Skip files that already exist"
+    ),
 ) -> None:
     """Download all Zensus 2022 gitterdaten (grid data) files."""
     # Mak sure our cache directory exists
@@ -188,10 +313,12 @@ async def collect_wrapper(tables, skip_existing):
     """
     Encapsulate all async opertations for the collect command
     """
-
-    files_to_import = tuple((
-        (filename, url) for filename, url in GITTERDATEN_FILES
-         if tables == ["all"] or filename in tables)
+    files_to_import = tuple(
+        (
+            (filename, url)
+            for filename, url in GITTERDATEN_FILES
+            if tables == ["all"] or filename in tables
+        )
     )
 
     rprint(f"[cyan]Downloading and importing {len(files_to_import)} gitterdaten files[/cyan]")
@@ -203,7 +330,11 @@ async def collect_wrapper(tables, skip_existing):
             jobs = []
 
             fetch_manager = FetchManager(
-                http_client, Path(CACHE), total=len(files_to_import), progress=progress, skip_existing=skip_existing
+                http_client,
+                Path(CACHE),
+                progress,
+                total=len(files_to_import),
+                skip_existing=skip_existing,
             )
 
             for filename, url in files_to_import:
@@ -247,8 +378,8 @@ class FetchManager:
         self,
         client: httpx.AsyncClient,
         output_folder: Path,
+        progress: Progress,
         total: int | None = None,
-        progress: Progress | None = None,
         semaphore: int = 10,
         skip_existing: bool = True,
     ) -> None:
@@ -259,18 +390,20 @@ class FetchManager:
         self.skip_existing = skip_existing
 
         # Progress bar tasks
-        self.fetch_task = progress.add_task(f"[cyan]Downloading...[/cyan]", total=total)
-        self.extract_task = progress.add_task(f"[cyan]Extracting...[/cyan]", total=total)
-        self.database_task = progress.add_task(f"[cyan]Importing...[/cyan]", total=total * 3)
+        self.fetch_task = progress.add_task("[cyan]Downloading...[/cyan]", total=total)
+        self.extract_task = progress.add_task("[cyan]Extracting...[/cyan]", total=total)
+        self.database_task = progress.add_task(
+            "[cyan]Importing...[/cyan]", total=total * 3 if total is not None else total
+        )
 
         # File processing statistics
         self.failed = 0
         self.success = 0
         self.skipped = 0
 
-        self.fetch_queue = asyncio.Queue()
-        self.extract_queue = asyncio.Queue()
-        self.database_queue = asyncio.Queue()
+        self.fetch_queue: asyncio.Queue[tuple[str, str] | None] = asyncio.Queue()
+        self.extract_queue: asyncio.Queue[Path | None] = asyncio.Queue()
+        self.database_queue: asyncio.Queue[Path | None] = asyncio.Queue()
 
     async def fetch_worker(self) -> None:
         """
@@ -298,19 +431,21 @@ class FetchManager:
 
             try:
                 async with self.semaphore:  # TODO: this probably isn't needed any more
-                    async with self.client.stream("GET", url, follow_redirects=True, timeout=60.0) as response:
+                    async with self.client.stream(
+                        "GET", url, follow_redirects=True, timeout=60.0
+                    ) as response:
                         response.raise_for_status()
 
                         async with aiofiles.open(output_path, "wb") as f:
                             async for chunk in response.aiter_bytes(chunk_size=8192):
                                 await f.write(chunk)
-        
+
                             self.progress.update(self.fetch_task, advance=1)
                             await self.extract_queue.put(output_path)
 
                     self.success += 1
 
-            except Exception as e:
+            except Exception:
                 self.failed += 1
             finally:
                 self.fetch_queue.task_done()
@@ -331,16 +466,13 @@ class FetchManager:
 
             try:
                 with tempfile.TemporaryDirectory() as extract_to:
-                    await asyncio.to_thread(
-                        zipfile.ZipFile(zip_file).extractall,
-                        extract_to
-                    )
+                    await asyncio.to_thread(zipfile.ZipFile(zip_file).extractall, extract_to)
 
                     for csv_file in Path(extract_to).rglob(self.CSV_FILE_MATCH_PATTERN):
                         await self.database_queue.put(csv_file)
 
                     self.progress.update(self.extract_task, advance=1)
-    
+
             finally:
                 self.extract_queue.task_done()
 
@@ -385,59 +517,32 @@ class FetchManager:
 
 @app.command()
 def csv2pgsql(
-        data_dir: Path = typer.Option(
-            Path("/home/thath/volume/zensus/2022/data/"),
-            "--data-dir",
-            "-d",
-            help="Directory containing CSV files to import",
-        ),
-        host: str = typer.Option(
-            "localhost",
-            "--host",
-            "-h",
-            help="PostgreSQL host",
-        ),
-        port: int = typer.Option(
-            5432,
-            "--port",
-            "-p",
-            help="PostgreSQL port",
-        ),
-        database: str = typer.Option(
-            "zensus",
-            "--database",
-            "--db",
-            help="PostgreSQL database name",
-        ),
-        user: str = typer.Option(
-            "postgres",
-            "--user",
-            "-u",
-            help="PostgreSQL user",
-        ),
-        password: Optional[str] = typer.Option(
-            None,
-            "--password",
-            help="PostgreSQL password (will prompt if not provided)",
-            prompt=True,
-            hide_input=True,
-        ),
-        schema: str = typer.Option(
-            "zensus",
-            "--schema",
-            "-s",
-            help="PostgreSQL schema name",
-        ),
-        srid: int = typer.Option(
-            3035,
-            "--srid",
-            help="SRID for the coordinate system (default: 3035 for ETRS89-extended / LAEA Europe)",
-        ),
-        drop_existing: bool = typer.Option(
-            False,
-            "--drop-existing/--no-drop",
-            help="Drop existing tables before import",
-        ),
+    data_dir: Path = typer.Option(
+        Path("/home/thath/volume/zensus/2022/data/"),
+        "--data-dir",
+        "-d",
+        help="Directory containing CSV files to import",
+    ),
+    host: str = typer.Option("localhost", "--host", "-h", help="PostgreSQL host"),
+    port: int = typer.Option(5432, "--port", "-p", help="PostgreSQL port"),
+    database: str = typer.Option("zensus", "--database", "--db", help="PostgreSQL database name"),
+    user: str = typer.Option("postgres", "--user", "-u", help="PostgreSQL user"),
+    password: str | None = typer.Option(
+        None,
+        "--password",
+        help="PostgreSQL password (will prompt if not provided)",
+        prompt=True,
+        hide_input=True,
+    ),
+    schema: str = typer.Option("zensus", "--schema", "-s", help="PostgreSQL schema name"),
+    srid: int = typer.Option(
+        3035,
+        "--srid",
+        help="SRID for the coordinate system (default: 3035 for ETRS89-extended / LAEA Europe)",
+    ),
+    drop_existing: bool = typer.Option(
+        False, "--drop-existing/--no-drop", help="Drop existing tables before import"
+    ),
 ) -> None:
     """Import CSV files from Zensus data into PostgreSQL with PostGIS using fast COPY."""
     if not data_dir.exists():
@@ -513,16 +618,16 @@ def csv2pgsql(
                     sanitized = column_mapping[header]
                     # Check for x coordinate column (starts with x_mp or is exactly named with coordinate pattern)
                     if (
-                            sanitized.startswith("x_mp")
-                            or sanitized.startswith("_x_mp")
-                            or "_x_mp_" in sanitized
+                        sanitized.startswith("x_mp")
+                        or sanitized.startswith("_x_mp")
+                        or "_x_mp_" in sanitized
                     ):
                         x_col = sanitized
                     # Check for y coordinate column (starts with y_mp or is exactly named with coordinate pattern)
                     elif (
-                            sanitized.startswith("y_mp")
-                            or sanitized.startswith("_y_mp")
-                            or "_y_mp_" in sanitized
+                        sanitized.startswith("y_mp")
+                        or sanitized.startswith("_y_mp")
+                        or "_y_mp_" in sanitized
                     ):
                         y_col = sanitized
 
@@ -534,7 +639,9 @@ def csv2pgsql(
                         f"  [yellow]No coordinate columns detected "
                         f"(x_col={x_col}, y_col={y_col})[/yellow]"
                     )
-                    rprint(f"  [yellow]Available columns: {', '.join(column_mapping.values())}[/yellow]")
+                    rprint(
+                        f"  [yellow]Available columns: {', '.join(column_mapping.values())}[/yellow]"
+                    )
 
                 with conn.cursor() as cur:
                     # Always drop temp table if it exists
@@ -550,22 +657,25 @@ def csv2pgsql(
                         """,
                         (schema, table_name),
                     )
-                    table_exists = cur.fetchone()[0]
+                    row = cur.fetchone()
+
+                    table_exists = row[0] if row is not None else False
 
                     if table_exists:
                         if drop_existing:
                             cur.execute(f"DROP TABLE {full_table_name} CASCADE;")
-                            rprint(f"  [yellow]Dropped existing table[/yellow]")
+                            rprint("  [yellow]Dropped existing table[/yellow]")
                         else:
-                            rprint(f"  [yellow]Table already exists, skipping. Use --drop-existing to recreate.[/yellow]")
+                            rprint(
+                                "  [yellow]Table already exists, skipping. Use --drop-existing to recreate.[/yellow]"
+                            )
                             skipped_count += 1
                             continue
 
                     # Create temporary table with all columns as TEXT (sanitized names)
                     temp_columns_def = [f"{column_mapping[h]} TEXT" for h in headers]
                     create_temp_sql = (
-                        f"CREATE TABLE {temp_table_name} "
-                        f"({', '.join(temp_columns_def)});"
+                        f"CREATE TABLE {temp_table_name} ({', '.join(temp_columns_def)});"
                     )
                     cur.execute(create_temp_sql)
 
@@ -598,7 +708,8 @@ def csv2pgsql(
 
                     # Get row count from temp table
                     cur.execute(f"SELECT COUNT(*) FROM {temp_table_name};")
-                    rows_loaded = cur.fetchone()[0]
+                    row = cur.fetchone()
+                    rows_loaded = row[0] if row is not None else 0
 
                     # Detect data types for columns
                     rprint("  [cyan]Detecting column types...[/cyan]")
@@ -613,9 +724,7 @@ def csv2pgsql(
                         column_types[col_name] = detected_type
 
                     # Report detected types
-                    numeric_cols = {
-                        col: typ for col, typ in column_types.items() if typ != "TEXT"
-                    }
+                    numeric_cols = {col: typ for col, typ in column_types.items() if typ != "TEXT"}
                     if numeric_cols:
                         rprint(
                             f"  [green]Detected {len(numeric_cols)} numeric columns "
@@ -639,8 +748,7 @@ def csv2pgsql(
 
                     # Create the final table (we already checked if it exists above)
                     create_final_sql = (
-                        f"CREATE TABLE {full_table_name} "
-                        f"({', '.join(final_columns_def)});"
+                        f"CREATE TABLE {full_table_name} ({', '.join(final_columns_def)});"
                     )
                     cur.execute(create_final_sql)
 
@@ -659,9 +767,7 @@ def csv2pgsql(
                         # Build the SELECT expression based on the target type
                         if col_type == "INTEGER":
                             # Convert TEXT to INTEGER, handling German decimal format and NULLs
-                            select_expr = (
-                                f"NULLIF(REPLACE({col_name}, ',', '.'), '')::INTEGER"
-                            )
+                            select_expr = f"NULLIF(REPLACE({col_name}, ',', '.'), '')::INTEGER"
                         elif col_type == "DOUBLE PRECISION":
                             # Convert TEXT to DOUBLE PRECISION, handling German decimal format and NULLs
                             select_expr = (
@@ -687,8 +793,8 @@ def csv2pgsql(
 
                     # Insert from temp to final table with geometry transformation
                     insert_from_temp_sql = f"""
-                        INSERT INTO {full_table_name} ({', '.join(insert_cols)})
-                        SELECT {', '.join(select_cols)}
+                        INSERT INTO {full_table_name} ({", ".join(insert_cols)})
+                        SELECT {", ".join(select_cols)}
                         FROM {temp_table_name}
                     """
                     cur.execute(insert_from_temp_sql)
