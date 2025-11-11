@@ -1,57 +1,22 @@
-from typing import Optional
-
 import psycopg
 import typer
 from rich import print as rprint
 
-app = typer.Typer()
 
-
-@app.command()
 def drop(
-        host: str = typer.Option(
-            "localhost",
-            "--host",
-            "-h",
-            help="PostgreSQL host",
-        ),
-        port: int = typer.Option(
-            5432,
-            "--port",
-            "-p",
-            help="PostgreSQL port",
-        ),
-        database: str = typer.Option(
-            "zensus",
-            "--database",
-            "--db",
-            help="PostgreSQL database name",
-        ),
-        user: str = typer.Option(
-            "postgres",
-            "--user",
-            "-u",
-            help="PostgreSQL user",
-        ),
-        password: Optional[str] = typer.Option(
-            None,
-            "--password",
-            help="PostgreSQL password (will prompt if not provided)",
-            prompt=True,
-            hide_input=True,
-        ),
-        schema: str = typer.Option(
-            "zensus",
-            "--schema",
-            "-s",
-            help="PostgreSQL schema name",
-        ),
-        confirm: bool = typer.Option(
-            False,
-            "--confirm",
-            "-y",
-            help="Skip confirmation prompt",
-        ),
+    host: str = typer.Option("localhost", "--host", "-h", help="PostgreSQL host"),
+    port: int = typer.Option(5432, "--port", "-p", help="PostgreSQL port"),
+    database: str = typer.Option("zensus", "--database", "--db", help="PostgreSQL database name"),
+    user: str = typer.Option("postgres", "--user", "-u", help="PostgreSQL user"),
+    password: str | None = typer.Option(
+        None,
+        "--password",
+        help="PostgreSQL password (will prompt if not provided)",
+        prompt=True,
+        hide_input=True,
+    ),
+    schema: str = typer.Option("zensus", "--schema", "-s", help="PostgreSQL schema name"),
+    confirm: bool = typer.Option(False, "--confirm", "-y", help="Skip confirmation prompt"),
 ) -> None:
     """Drop all tables in a PostgreSQL schema."""
     # Connect to PostgreSQL
@@ -107,7 +72,9 @@ def drop(
                 rprint(f"  [green]✓ Dropped {full_table_name}[/green]")
 
             conn.commit()
-            rprint(f"\n[bold green]Successfully dropped all tables in schema '{schema}'[/bold green]")
+            rprint(
+                f"\n[bold green]Successfully dropped all tables in schema '{schema}'[/bold green]"
+            )
 
     except Exception as e:
         rprint(f"[red]Error: {e!s}[/red]")
