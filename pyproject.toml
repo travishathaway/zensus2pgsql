@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]  # https://packaging.python.org/en/latest/specifications/pyproject-toml/
 name = "zensus2pgsql"
-version = "0.0.0"
+version = "0.1.0"
 description = "A Python CLI program that collects Zensus GIS data from Germany and imports it into PostgreSQL"
 readme = "README.md"
 authors = [
   { name = "Travis Hathaway", email = "travis.j.hathaway@gmail.com" },
 ]
-requires-python = ">=3.13,<4.0"  # TODO: this should probably 3.10+
+requires-python = ">=3.10,<4.0"
 dependencies = [
   "aiocsv>=1.4.0",
   "aiofiles>=25.1.0",
