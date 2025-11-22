@@ -47,11 +47,27 @@ zensus2pgsql list
 For now, the names of the data sets are only available in German, so please use translation
 software if you need help figuring out what they mean!
 
-To view the CLI help information, run:
+After you've fond a dataset to import, you can do so by running the following command:
 
-```sh
-zensus2pgsql --help
+```cli
+zensus2pgsql create \
+  --host localhost \
+  --port 5432 \
+  --user username \
+  --schema public \
+  heizungsart eigentuemerquote
 ```
+
+The above command will import two dataset related to the type of heating a house uses and the
+percentage of those who own their home in a particular area.
 
 ## Contributing
 
+Contributions are welcome and take the following forms:
+
+- Creating a bug report if you've found an issue
+- Creating a feature request if you'd like to see new functionality added
+- Create a pull request to accomplish either of the two above
+
+Before creating a pull request, I kindly ask that you either create a bug report or
+a feature request first, so I can sign off on having it added to the project.
