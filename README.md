@@ -33,7 +33,7 @@ link below:
 To install this program, run:
 
 ```sh
-pip install git+ssh://git@github.com:/travishathaway/zensus2pgsql.git
+pip install zensus2pgsql
 ```
 
 ## Using
