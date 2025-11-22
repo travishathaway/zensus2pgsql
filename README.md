@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./assets/zensus2pgsql-logo.svg" width="50%">
+  <img src="https://raw.githubusercontent.com/travishathaway/zensus2pgsql/refs/heads/main/assets/zensus2pgsql-logo.svg" width="50%">
 </p>
 <p align="center">
   <em>German census data, now in PostgreSQL!</em>
