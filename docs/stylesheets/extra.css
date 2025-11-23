@@ -37,12 +37,11 @@
 }
 
 @media screen and (max-width: 76.2344em) {
-    .md-header__button.md-logo {
-        margin: 1em;
+    .md-nav__button.md-logo > img {
         padding: 0.2em;
         padding-right: 0.2em;
         background-color: white;
-        border-radius: 15px;
+        border-radius: 10px;
         padding-right: 0.5em;
     }
 }
