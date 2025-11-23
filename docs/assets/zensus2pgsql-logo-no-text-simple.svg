@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!-- Uploaded to: SVG Repo, www.svgrepo.com, Generator: SVG Repo Mixer Tools -->
+
+<svg
+   height="547"
+   width="817"
+   version="1.1"
+   id="Layer_1"
+   viewBox="0 0 522.88104 350.08075"
+   xml:space="preserve"
+   sodipodi:docname="zensus2pgsql-logo-no-text-simple.svg"
+   inkscape:version="1.4.2 (2aeb623e1d, 2025-05-12)"
+   xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
+   xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg"><sodipodi:namedview
+   id="namedview11"
+   pagecolor="#ffffff"
+   bordercolor="#000000"
+   borderopacity="0.25"
+   inkscape:showpageshadow="2"
+   inkscape:pageopacity="0.0"
+   inkscape:pagecheckerboard="0"
+   inkscape:deskcolor="#d1d1d1"
+   showguides="true"
+   inkscape:zoom="0.71"
+   inkscape:cx="411.97183"
+   inkscape:cy="421.83099"
+   inkscape:window-width="1854"
+   inkscape:window-height="1011"
+   inkscape:window-x="0"
+   inkscape:window-y="0"
+   inkscape:window-maximized="1"
+   inkscape:current-layer="g6"
+   showgrid="false"
+   inkscape:export-bgcolor="#ffffffff" />
+<defs
+   id="defs6">
+	<!-- Linear gradient with German flag colors: black, red, gold (left to right) -->
+	<linearGradient
+   id="germanFlag"
+   x1="-2.0877147"
+   y1="103.05551"
+   x2="419.63144"
+   y2="103.05551"
+   gradientTransform="matrix(1.2262236,0,0,0.81551193,12.800024,0)"
+   gradientUnits="userSpaceOnUse">
+		<stop
+   offset="0%"
+   style="stop-color:#000000;stop-opacity:1"
+   id="stop1" />
+		<stop
+   offset="33.33%"
+   style="stop-color:#000000;stop-opacity:1"
+   id="stop2" />
+		<stop
+   offset="33.33%"
+   style="stop-color:#DD0000;stop-opacity:1"
+   id="stop3" />
+		<stop
+   offset="66.67%"
+   style="stop-color:#DD0000;stop-opacity:1"
+   id="stop4" />
+		<stop
+   offset="66.67%"
+   style="stop-color:#FFCE00;stop-opacity:1"
+   id="stop5" />
+		<stop
+   offset="100%"
+   style="stop-color:#FFCE00;stop-opacity:1"
+   id="stop6" />
+	</linearGradient>
+</defs>
+<g
+   id="g7"
+   transform="translate(-7.680015,-80.640138)">
+	<g
+   id="g6">
+		<path
+   fill="url(#germanFlag)"
+   stroke="#000000"
+   stroke-width="3"
+   d="m 514.118,299.729 c 5.899,0 10.684,-4.783 10.684,-10.683 V 216.163 C 524.801,154.393 474.549,104.141 412.78,104.141 h -31.397 c -0.859,-1.01 -1.749,-1.992 -2.686,-2.929 -9.421,-9.421 -21.945,-14.609 -35.263,-14.609 -20.106,0 -39.011,7.831 -53.231,22.051 -11.18,11.18 -18.441,25.356 -21.009,40.735 h -64.195 c -55.055,0 -102.20598,34.462 -121.02598,82.942 h -8.694 c -34.451,-10e-4 -62.478996,28.027 -62.478996,62.478 0,5.901 4.782998,10.683 10.682996,10.683 5.901,0 10.684,-4.783 10.684,-10.683 0,-22.669 18.443,-41.111 41.111,-41.111 h 2.464 c -1.643,8.232 -2.512,16.738 -2.512,25.446 v 97.826 37.745 c 0,5.901 4.783,10.684 10.683,10.684 h 60.96198 60.962 c 5.901,0 10.684,-4.783 10.684,-10.684 V 376.97 321.33 h 32.399 v 55.64 37.745 c 0,5.901 4.783,10.684 10.683,10.684 h 60.962 60.08 c 2.833,0 5.552,-1.126 7.555,-3.13 2.003,-2.004 3.129,-4.722 3.128,-7.556 l -0.033,-137.61 c 15.529,2.253 29.86,9.405 41.155,20.698 13.846,13.847 21.472,32.258 21.472,51.842 v 65.074 c 0,5.901 4.784,10.683 10.684,10.683 h 47.512 c 5.899,0 10.684,-4.783 10.684,-10.683 v -47.341 c 0,-5.901 -4.784,-10.684 -10.684,-10.684 -5.899,0 -10.683,4.783 -10.683,10.684 v 36.657 H 477.29 v -54.391 c 0,-25.29 -9.848,-49.067 -27.729,-66.95 -17.882,-17.881 -41.659,-27.729 -66.95,-27.729 -24.86,0 -48.24,-9.682 -65.827,-27.258 -17.581,-17.593 -27.263,-40.972 -27.263,-65.833 0,-0.526 0.012,-1.05 0.021,-1.508 0.376,-13.806 5.976,-26.805 15.772,-36.601 38.33294,-34.429821 67.52489,-6.25199 66.615,38.317 0,13.97083 21.367,13.96914 21.367,0 v -25.616 c 0,-3.717 -0.409,-7.387 -1.209,-10.955 h 20.695 c 49.987,0 90.654,40.667 90.654,90.654 v 72.883 c -0.002,5.9 4.782,10.683 10.682,10.683 z M 301.674,242.811 c 58.74939,41.41273 12.44613,40.10957 10.208,67.836 v 55.64 h -39.596 v -55.64 -15.837 c 0,-5.901 -4.783,-10.683 -10.684,-10.683 -5.9,0 -10.683,4.783 -10.683,10.683 v 5.154 H 146.875 c -5.9,0 -10.683,4.784 -10.683,10.683 v 55.64 H 96.59802 v -87.142 c 0,-59.766 48.62898,-108.388 108.40098,-108.388 h 63.495 c 2.076,27.216 13.67,52.531 33.18,72.054 z"
+   id="path6"
+   style="fill:url(#germanFlag);stroke-width:7.68001;stroke-dasharray:none"
+   sodipodi:nodetypes="sscscssscsccsssscscsscssccccsscsscccssssssssccscscscsssscsscscscccssscssccsscc"
+   inkscape:export-filename="../f833deea/favicon.ico"
+   inkscape:export-xdpi="7.52"
+   inkscape:export-ydpi="7.52" />
+	</g>
+</g>
+<g
+   id="g9"
+   transform="translate(2.560005,-78.080134)">
+	<g
+   id="g8">
+		<path
+   fill="#000000"
+   d="m 501.317,315.586 c -5.899,0 -10.684,4.783 -10.684,10.683 v 3.876 c 0,5.899 4.784,10.683 10.684,10.683 5.9,0 10.683,-4.783 10.683,-10.682 v -3.876 c 0,-5.9 -4.783,-10.684 -10.683,-10.684 z"
+   id="path7" />
+	</g>
+</g>
+<g
+   id="g11"
+   transform="translate(-7.680015,-78.080134)">
+	<g
+   id="g10">
+		<path
+   fill="#000000"
+   d="m 425.154,183.815 c -5.899,0 -10.684,4.783 -10.684,10.683 v 6.536 c 0,5.899 4.784,10.683 10.684,10.683 5.899,0 10.683,-4.784 10.683,-10.683 v -6.536 c 0,-5.9 -4.784,-10.683 -10.683,-10.683 z"
+   id="path9" />
+	</g>
+</g>
+</svg>

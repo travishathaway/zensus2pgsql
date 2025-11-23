@@ -1,0 +1,57 @@
+@font-face {
+  font-family: 'SpaceMonoRegular';
+  src: url('../assets/fonts/SpaceMono-Regular.woff2') format('woff2');
+  font-weight: 400;
+}
+
+@font-face {
+  font-family: 'SpaceMonoBold';
+  src: url('../assets/fonts/SpaceMono-Bold.woff2') format('woff2');
+  font-weight: 700;
+}
+
+@font-face {
+  font-family: 'SpaceMonoBoldItalic';
+  src: url('../assets/fonts/SpaceMono-BoldItalic.woff2') format('woff2');
+  font-weight: 700;
+}
+
+@font-face {
+  font-family: 'SpaceMonoItalic';
+  src: url('../assets/fonts/SpaceMono-Italic.ttf') format('woff2');
+  font-weight: 700;
+}
+
+/** Overrides of Material Theme CSS **/
+.md-header__button.md-logo {
+    margin: 1em;
+    padding: 0.2em;
+    padding-right: 0.2em;
+    background-color: white;
+    border-radius: 15px;
+    padding-right: 0.5em;
+}
+
+.md-header__button.md-logo > img {
+    height: 5em;
+}
+
+@media screen and (max-width: 76.2344em) {
+    .md-header__button.md-logo {
+        margin: 1em;
+        padding: 0.2em;
+        padding-right: 0.2em;
+        background-color: white;
+        border-radius: 15px;
+        padding-right: 0.5em;
+    }
+}
+
+.md-header__topic {
+    font-family: "SpaceMonoBold";
+    font-size: 1.4em;
+}
+
+h1, h2, h3, h4, h5, h6 {
+    font-family: "SpaceMonoBold", sans-serif;
+}

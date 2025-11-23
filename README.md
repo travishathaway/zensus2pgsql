@@ -17,8 +17,6 @@
   </a>
 </p>
 
-# zensus2pgsql
-
 A CLI program that imports German census CSV data (spelled "zensus" in German) into PostgreSQL
 with PostGIS geographic data types. All data is provided by the Statitisches Bundesamt of 
 Germany. Currently, only data from the 2022 census is available.
@@ -63,11 +61,12 @@ percentage of those who own their home in a particular area.
 
 ## Contributing
 
-Contributions are welcome and take the following forms:
+Contributions are welcome and can ake the following forms:
 
 - Creating a bug report if you've found an issue
 - Creating a feature request if you'd like to see new functionality added
-- Create a pull request to accomplish either of the two above
+- Creating a pull request to accomplish either of the two above
+- Leaving a star on the repository 
 
 Before creating a pull request, I kindly ask that you either create a bug report or
 a feature request first, so I can sign off on having it added to the project.

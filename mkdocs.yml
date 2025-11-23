@@ -1,14 +1,21 @@
-site_name: Zensus Collector
-site_description: A Python CLI program that collects Zensus data from Germany
-site_url: https://travishathaway.github.io/zensus
-repo_url: https://github.com/travishathaway/zensus
-repo_name: travishathaway/zensus
+site_name: zensus2pgsql
+site_description:  A CLI program for importing geographic German census data into PostgreSQL 
+site_url: https://travishathaway.github.io/zensus2pgsql
+repo_url: https://github.com/travishathaway/zensus2pgsql
+repo_name: travishathaway/zensus2pgsql
 
 theme:
   name: material
+  logo: assets/zensus2pgsql-logo-no-text-simple.svg
+  favicon: assets/favicon.ico
+  palette:
+    primary: black
 
 nav:
-  - Home: index.md
+  - Start: index.md
+
+extra_css:
+  - stylesheets/extra.css
 
 plugins:
   - search

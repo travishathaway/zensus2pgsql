@@ -1,7 +1,8 @@
-"""Zensus Collector CLI."""
+"""zensus2pgsql CLI application entry point."""
 
 import typer
 
+from . import __version__
 from .commands.create import collect
 from .commands.drop import drop
 from .commands.list import list_datasets
@@ -9,13 +10,14 @@ from .commands.list import list_datasets
 
 def _version_callback(value: bool):
     if value:
-        from . import __version__
-
         typer.echo(f"zensus2pgsql version: {__version__}")
         raise typer.Exit()
 
 
-app = typer.Typer(help="Zensus 2022 Gitterdaten PostgreSQL importer", no_args_is_help=True)
+app = typer.Typer(
+    help=f"zensus2pgsql [{__version__}]  A CLI program for importing geographic German census data into PostgreSQL ",
+    no_args_is_help=True,
+)
 
 
 @app.callback()
@@ -29,7 +31,7 @@ def main(
         callback=_version_callback,
     ),
 ):
-    """Zensus 2022 Gitterdaten PostgreSQL importer."""
+    f"""zensus2pgsql [{__version__}]  A CLI program for importing geographic German census data into PostgreSQL """
 
 
 # Add commands directly to the main app
