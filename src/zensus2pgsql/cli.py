@@ -3,7 +3,7 @@
 import typer
 
 from . import __version__
-from .commands.create import collect
+from .commands.create import create
 from .commands.drop import drop
 from .commands.list import list_datasets
 
@@ -35,6 +35,6 @@ def main(
 
 
 # Add commands directly to the main app
-app.command(name="create")(collect)
+app.command(name="create")(create)
 app.command(name="list")(list_datasets)
 app.command(name="drop")(drop)

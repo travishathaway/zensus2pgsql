@@ -10,6 +10,7 @@ def test_cli_help() -> None:
     runner = CliRunner()
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    assert "Zensus 2022 Gitterdaten PostgreSQL importer" in result.stdout
+    assert "zensus2pgsql" in result.stdout
     assert "create" in result.stdout
     assert "list" in result.stdout
+    assert "drop" in result.stdout

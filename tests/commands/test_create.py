@@ -11,8 +11,8 @@ import pytest
 from zensus2pgsql.commands.create import (
     DatabaseConfig,
     FetchManager,
-    collect,
     collect_wrapper,
+    create,
     detect_column_type,
     detect_file_encoding,
     detect_file_encoding_old,
@@ -234,7 +234,7 @@ class TestDetectColumnType:
     async def test_detects_integer_type(self):
         """Test detection of INTEGER type columns."""
         conn = AsyncMock()
-        conn.fetchrow = AsyncMock(return_value=(100, 100, 100, 100))
+        conn.fetchrow = AsyncMock(return_value=(100, 0, 100, 100, 100))
 
         result = await detect_column_type(conn, "test_table", "test_col")
         assert result == "INTEGER"
@@ -244,7 +244,7 @@ class TestDetectColumnType:
         """Test detection of DOUBLE PRECISION type columns."""
         conn = AsyncMock()
         # non_empty=100, integer_count=50, numeric_count=100 (all are numeric but not all integers)
-        conn.fetchrow = AsyncMock(return_value=(100, 100, 50, 100))
+        conn.fetchrow = AsyncMock(return_value=(100, 0, 100, 50, 100))
 
         result = await detect_column_type(conn, "test_table", "test_col")
         assert result == "DOUBLE PRECISION"
@@ -254,7 +254,7 @@ class TestDetectColumnType:
         """Test detection of TEXT type columns."""
         conn = AsyncMock()
         # Some values are not numeric
-        conn.fetchrow = AsyncMock(return_value=(100, 100, 50, 50))
+        conn.fetchrow = AsyncMock(return_value=(100, 0, 100, 50, 50))
 
         result = await detect_column_type(conn, "test_table", "test_col")
         assert result == "TEXT"
@@ -264,7 +264,7 @@ class TestDetectColumnType:
         """Test that empty columns return TEXT type."""
         conn = AsyncMock()
         # non_empty=0
-        conn.fetchrow = AsyncMock(return_value=(100, 0, 0, 0))
+        conn.fetchrow = AsyncMock(return_value=(100, 0, 0, 0, 0))
 
         result = await detect_column_type(conn, "test_table", "test_col")
         assert result == "TEXT"
@@ -273,7 +273,7 @@ class TestDetectColumnType:
     async def test_all_null_returns_text(self):
         """Test that all-NULL columns return TEXT type."""
         conn = AsyncMock()
-        conn.fetchrow = AsyncMock(return_value=(0, 0, 0, 0))
+        conn.fetchrow = AsyncMock(return_value=(0, 0, 0, 0, 0))
 
         result = await detect_column_type(conn, "test_table", "test_col")
         assert result == "TEXT"
@@ -283,7 +283,7 @@ class TestDetectColumnType:
         """Test that negative integers are correctly detected."""
         conn = AsyncMock()
         # All values are integers including negatives
-        conn.fetchrow = AsyncMock(return_value=(100, 100, 100, 100))
+        conn.fetchrow = AsyncMock(return_value=(100, 0, 100, 100, 100))
 
         result = await detect_column_type(conn, "test_table", "test_col")
         assert result == "INTEGER"
@@ -293,10 +293,20 @@ class TestDetectColumnType:
         """Test that German decimal format is detected as numeric."""
         conn = AsyncMock()
         # Numeric regex handles German format via REPLACE
-        conn.fetchrow = AsyncMock(return_value=(100, 100, 0, 100))
+        conn.fetchrow = AsyncMock(return_value=(100, 0, 100, 0, 100))
 
         result = await detect_column_type(conn, "test_table", "test_col")
         assert result == "DOUBLE PRECISION"
+
+    @pytest.mark.asyncio
+    async def test_null_values_integer_detected(self):
+        """Test that null values and integers are detected as integer."""
+        conn = AsyncMock()
+        # Numeric regex handles German format via REPLACE
+        conn.fetchrow = AsyncMock(return_value=(100, 50, 50, 0, 100))
+
+        result = await detect_column_type(conn, "test_table", "test_col")
+        assert result == "INTEGER"
 
 
 # =============================================================================
@@ -837,7 +847,7 @@ class TestDatabaseWorker:
     ):
         """Test that geometry column is created when coordinates present."""
         mock_asyncpg_connection.fetchval = AsyncMock(return_value=False)
-        mock_asyncpg_connection.fetchrow = AsyncMock(return_value=(100, 100, 100, 100))
+        mock_asyncpg_connection.fetchrow = AsyncMock(return_value=(100, 0, 100, 100, 100))
 
         with tempfile.TemporaryDirectory() as tmpdir:
             manager = FetchManager(
@@ -916,7 +926,7 @@ class TestDatabaseWorker:
     ):
         """Test that custom SRID is used in geometry creation."""
         mock_asyncpg_connection.fetchval = AsyncMock(return_value=False)
-        mock_asyncpg_connection.fetchrow = AsyncMock(return_value=(100, 100, 100, 100))
+        mock_asyncpg_connection.fetchrow = AsyncMock(return_value=(100, 0, 100, 100, 100))
 
         with tempfile.TemporaryDirectory() as tmpdir:
             manager = FetchManager(
@@ -1002,7 +1012,7 @@ class TestDatabaseWorker:
 
         # Return values indicating TEXT type (not all values are numeric)
         mock_asyncpg_connection.fetchval = AsyncMock(return_value=False)
-        mock_asyncpg_connection.fetchrow = AsyncMock(return_value=(100, 100, 0, 0))  # TEXT
+        mock_asyncpg_connection.fetchrow = AsyncMock(return_value=(100, 0, 100, 0, 0))  # TEXT
 
         with tempfile.TemporaryDirectory() as tmpdir:
             manager = FetchManager(
@@ -1037,7 +1047,7 @@ class TestDatabaseWorker:
 
         mock_asyncpg_connection.fetchval = AsyncMock(return_value=False)
         # non_empty=100, integer_count=50, numeric_count=100 -> DOUBLE PRECISION
-        mock_asyncpg_connection.fetchrow = AsyncMock(return_value=(100, 100, 50, 100))
+        mock_asyncpg_connection.fetchrow = AsyncMock(return_value=(100, 0, 100, 50, 100))
 
         with tempfile.TemporaryDirectory() as tmpdir:
             manager = FetchManager(
@@ -1567,7 +1577,7 @@ class TestCollectCLI:
             ) as mock_asyncio_run,
         ):
             # Call the function directly
-            collect(
+            create(
                 tables=["all"],
                 host="localhost",
                 port=5432,

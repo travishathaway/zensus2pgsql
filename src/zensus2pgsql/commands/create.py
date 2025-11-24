@@ -38,6 +38,8 @@ from ..cache import CACHE, create_cache_dir
 from ..constants import GITTERDATEN_FILES
 from ..logging import configure_logging, logger
 
+NULL_VALUE = "–"  # WARNING! This is not the normal dash -> "-"!
+
 
 def sanitize_column_name(name: str) -> str:
     """Sanitize column name to be PostgreSQL-compliant.
@@ -118,6 +120,8 @@ async def detect_column_type(conn: asyncpg.Connection, table_name: str, column_n
 
     Checks if column values can be converted to INTEGER or DOUBLE PRECISION.
     Returns 'INTEGER', 'DOUBLE PRECISION', or 'TEXT'.
+
+    These datasets have a special value for null, and we accommodate for that.
     """
     # Replace commas with dots for German decimal format
     # Check if all non-null, non-empty values can be cast to numeric types
@@ -125,6 +129,7 @@ async def detect_column_type(conn: asyncpg.Connection, table_name: str, column_n
         rf"""
         SELECT
             COUNT(*) as total,
+            COUNT(CASE WHEN {column_name} = '{NULL_VALUE}' THEN 1 END) as null_values,
             COUNT(CASE WHEN {column_name} IS NOT NULL AND {column_name} != '' THEN 1 END) as non_empty,
             COUNT(CASE
                 WHEN {column_name} IS NOT NULL AND {column_name} != ''
@@ -139,21 +144,17 @@ async def detect_column_type(conn: asyncpg.Connection, table_name: str, column_n
         FROM {table_name}
         """
     )
-    total, non_empty, integer_count, numeric_count = row
+    total, null_values, non_empty, integer_count, numeric_count = row
 
-    # If column is empty or has no non-empty values, keep as TEXT
     if non_empty == 0:
         return "TEXT"
 
-    # If all non-empty values are integers
-    if integer_count == non_empty:
+    if integer_count + null_values == non_empty:
         return "INTEGER"
 
-    # If all non-empty values are numeric (including decimals)
-    if numeric_count == non_empty:
+    if numeric_count + null_values == non_empty:
         return "DOUBLE PRECISION"
 
-    # Otherwise, keep as TEXT
     return "TEXT"
 
 
@@ -235,7 +236,7 @@ async def get_db_pool(db_config: DatabaseConfig) -> asyncpg.Pool:
         raise typer.Exit(1)
 
 
-def collect(
+def create(
     tables: list[str] = typer.Argument(["all"]),
     host: str = typer.Option("localhost", "--host", "-h", help="PostgreSQL host"),
     port: int = typer.Option(5432, "--port", "-p", help="PostgreSQL port"),
@@ -293,7 +294,7 @@ async def collect_wrapper(tables: list[str], skip_existing: bool, db_config: Dat
 
     rprint(f"[cyan]Downloading and importing {len(files_to_import)} Gitterdaten files[/cyan]")
 
-    http_client = httpx.AsyncClient(http2=True)
+    http_client = httpx.AsyncClient(http2=False)
 
     try:
         # Configure progress bar to show counts instead of percentages
@@ -694,12 +695,22 @@ class FetchManager:
                             # Build the SELECT expression based on the target type
                             if col_type == "INTEGER":
                                 # Convert TEXT to INTEGER, handling German decimal format and NULLs
-                                select_expr = f"NULLIF(REPLACE({col_name}, ',', '.'), '')::INTEGER"
+                                select_expr = f"""
+                                    NULLIF(
+                                        REPLACE(
+                                            REPLACE({col_name}, ',', '.'),
+                                            '{NULL_VALUE}',
+                                            ''), '')::INTEGER
+                                """
                             elif col_type == "DOUBLE PRECISION":
                                 # Convert TEXT to DOUBLE PRECISION, handling German decimal format and NULLs
-                                select_expr = (
-                                    f"NULLIF(REPLACE({col_name}, ',', '.'), '')::DOUBLE PRECISION"
-                                )
+                                select_expr = f"""
+                                    NULLIF(
+                                        REPLACE(
+                                            REPLACE({col_name}, ',', '.'),
+                                            '{NULL_VALUE}',
+                                            ''), '')::DOUBLE PRECISION
+                                """
                             else:
                                 # Keep as TEXT
                                 select_expr = col_name
