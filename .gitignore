@@ -67,3 +67,6 @@ dist/
 
 # VS Code
 .vscode/
+
+# pixi
+.pixi/
