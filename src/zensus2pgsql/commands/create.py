@@ -721,13 +721,28 @@ class FetchManager:
                         # Add geometry transformation if we have coordinates
                         if x_col and y_col:
                             logger.debug(f"Adding geometry column with SRID {self.db_config.srid}")
-                            # Use ST_SetSRID and ST_MakePoint for geometry creation
-                            select_cols.append(
+                            # Source data is in SRID 3035 (ETRS89-extended / LAEA Europe)
+                            source_srid = 3035
+
+                            # Create point geometry with source SRID
+                            point_expr = (
                                 f"ST_SetSRID(ST_MakePoint("
                                 f"NULLIF(REPLACE({x_col}, ',', '.'), '')::double precision, "
                                 f"NULLIF(REPLACE({y_col}, ',', '.'), '')::double precision"
-                                f"), {self.db_config.srid})"
+                                f"), {source_srid})"
                             )
+
+                            # Transform to target SRID if different from source
+                            if self.db_config.srid != source_srid:
+                                logger.debug(
+                                    f"Transforming coordinates from SRID {source_srid} "
+                                    f"to SRID {self.db_config.srid}"
+                                )
+                                geom_expr = f"ST_Transform({point_expr}, {self.db_config.srid})"
+                            else:
+                                geom_expr = point_expr
+
+                            select_cols.append(geom_expr)
                             insert_cols.append("geom")
 
                         # Insert from temp to final table with geometry transformation
