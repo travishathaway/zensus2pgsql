@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]  # https://packaging.python.org/en/latest/specifications/pyproject-toml/
 name = "zensus2pgsql"
-version = "0.1.1"
+version = "0.1.2"
 description = "A Python CLI program that collects Zensus GIS data from Germany and imports it into PostgreSQL"
 readme = "README.md"
 authors = [
