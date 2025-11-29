@@ -40,200 +40,8 @@ from ..logging import configure_logging, logger
 
 NULL_VALUE = "–"  # WARNING! This is not the normal dash -> "-"!
 
-
-def sanitize_column_name(name: str) -> str:
-    """Sanitize column name to be PostgreSQL-compliant.
-
-    PostgreSQL identifiers cannot start with a digit.
-    This function prefixes such names with an underscore.
-    """
-    name = name.lower()
-    # If the name starts with a digit, prefix with underscore
-    if name and name[0].isdigit():
-        return f"_{name}"
-    return name
-
-
-def sanitize_table_name(filename: str) -> str:
-    """Sanitize table name to be PostgreSQL-compliant.
-
-    PostgreSQL table names have a 63-character limit.
-    This function removes redundant prefixes/suffixes and normalizes the name.
-    """
-    name = filename.lower().replace("-", "_").replace(" ", "_")
-
-    # Remove common redundant prefixes and suffixes
-    name = name.replace("zensus2022_", "")
-    name = name.replace("_gitter", "")
-
-    # Ensure it's not too long (PostgreSQL limit is 63 chars)
-    if len(name) > 63:
-        name = name[:63]
-
-    return name
-
-
-async def detect_file_encoding(file_path: Path) -> str:
-    """Detect the encoding of a CSV file.
-
-    Tries common encodings and returns the first one that works.
-    """
-    encodings = ["utf-8", "iso-8859-1", "windows-1252", "cp1252"]
-
-    for encoding in encodings:
-        try:
-            async with aiofiles.open(file_path, encoding=encoding) as f:
-                # Try to read first 10 lines
-                for _ in range(10):
-                    await f.readline()
-            return encoding
-        except (UnicodeDecodeError, UnicodeError):
-            continue
-
-    # Default to iso-8859-1 which accepts all byte values
-    return "iso-8859-1"
-
-
-def detect_file_encoding_old(file_path: Path) -> str:
-    """Detect the encoding of a CSV file.
-
-    Tries common encodings and returns the first one that works.
-    """
-    encodings = ["utf-8", "iso-8859-1", "windows-1252", "cp1252"]
-
-    for encoding in encodings:
-        try:
-            with open(file_path, encoding=encoding) as f:
-                # Try to read first 10 lines
-                for _ in range(10):
-                    f.readline()
-            return encoding
-        except (UnicodeDecodeError, UnicodeError):
-            continue
-
-    # Default to iso-8859-1 which accepts all byte values
-    return "iso-8859-1"
-
-
-async def detect_column_type(conn: asyncpg.Connection, table_name: str, column_name: str) -> str:
-    """Detect the appropriate PostgreSQL type for a column.
-
-    Checks if column values can be converted to INTEGER or DOUBLE PRECISION.
-    Returns 'INTEGER', 'DOUBLE PRECISION', or 'TEXT'.
-
-    These datasets have a special value for null, and we accommodate for that.
-    """
-    # Replace commas with dots for German decimal format
-    # Check if all non-null, non-empty values can be cast to numeric types
-    row = await conn.fetchrow(
-        rf"""
-        SELECT
-            COUNT(*) as total,
-            COUNT(CASE WHEN {column_name} = '{NULL_VALUE}' THEN 1 END) as null_values,
-            COUNT(CASE WHEN {column_name} IS NOT NULL AND {column_name} != '' THEN 1 END) as non_empty,
-            COUNT(CASE
-                WHEN {column_name} IS NOT NULL AND {column_name} != ''
-                AND REPLACE({column_name}, ',', '.') ~ '^-?[0-9]+$'
-                THEN 1
-            END) as integer_count,
-            COUNT(CASE
-                WHEN {column_name} IS NOT NULL AND {column_name} != ''
-                AND REPLACE({column_name}, ',', '.') ~ '^-?[0-9]+\.?[0-9]*$'
-                THEN 1
-            END) as numeric_count
-        FROM {table_name}
-        """
-    )
-    total, null_values, non_empty, integer_count, numeric_count = row
-
-    if non_empty == 0:
-        return "TEXT"
-
-    if integer_count + null_values == non_empty:
-        return "INTEGER"
-
-    if numeric_count + null_values == non_empty:
-        return "DOUBLE PRECISION"
-
-    return "TEXT"
-
-
-class DatabaseConfig(NamedTuple):
-    """Hold database configuration."""
-
-    host: str
-    port: int
-    database: str
-    user: str
-    password: str | None
-    schema: str
-    srid: int
-    drop_existing: bool
-
-
-async def get_db_pool(db_config: DatabaseConfig) -> asyncpg.Pool:
-    """
-    Create a database connection pool and make sure the database is ready for import.
-
-    Returns a connection pool instead of a single connection to support concurrent workers.
-    """
-    # Test database connection first
-    try:
-        logger.info(
-            f"Connecting to PostgreSQL database '{db_config.database}' at {db_config.host}:{db_config.port}"
-        )
-        test_conn = await asyncpg.connect(
-            user=db_config.user,
-            password=db_config.password,
-            database=db_config.database,
-            host=db_config.host,
-            port=db_config.port,
-        )
-        logger.info(f"Successfully connected to PostgreSQL database '{db_config.database}'")
-    except asyncpg.PostgresError as e:
-        logger.error(f"Error connecting to PostgreSQL: {e!s}")
-        raise typer.Exit(1)
-
-    # Ensure chosen schema exists
-    try:
-        logger.debug(f"Checking if schema '{db_config.schema}' exists")
-        schema_exists = await test_conn.fetchval(
-            """
-            SELECT EXISTS(
-                SELECT schema_name
-                FROM information_schema.schemata where schema_name = $1
-            )
-            """,
-            db_config.schema,
-        )
-        if not schema_exists:
-            logger.error(f"Schema does not exist: {db_config.schema}")
-            await test_conn.close()
-            raise typer.Exit(1)
-        logger.debug(f"Schema '{db_config.schema}' exists")
-    except asyncpg.PostgresError as e:
-        logger.error(f"PostgreSQL error: {e!s}")
-        await test_conn.close()
-        raise typer.Exit(1)
-
-    await test_conn.close()
-
-    # Create connection pool for concurrent workers
-    try:
-        pool = await asyncpg.create_pool(
-            user=db_config.user,
-            password=db_config.password,
-            database=db_config.database,
-            host=db_config.host,
-            port=db_config.port,
-            min_size=2,
-            max_size=10,
-        )
-        logger.debug("Created database connection pool")
-        return pool
-    except asyncpg.PostgresError as e:
-        logger.error(f"Error creating connection pool: {e!s}")
-        raise typer.Exit(1)
+#: ID column prefix found in CSV files
+ID_COLUMN_PREFIX = "gitter_id"
 
 
 def create(
@@ -278,7 +86,7 @@ def create(
     asyncio.run(collect_wrapper(tables, skip_existing, db_config))
 
 
-async def collect_wrapper(tables: list[str], skip_existing: bool, db_config: DatabaseConfig):
+async def collect_wrapper(tables: list[str], skip_existing: bool, db_config: "DatabaseConfig"):
     """
     Encapsulate all async operations for the collect command
     """
@@ -341,7 +149,7 @@ class FetchManager:
         output_folder: Path,
         progress: Progress,
         db_pool: asyncpg.Pool,
-        db_config: DatabaseConfig,
+        db_config: "DatabaseConfig",
         total: int | None = None,
         semaphore: int = 10,
         skip_existing: bool = True,
@@ -520,158 +328,39 @@ class FetchManager:
                     if file_encoding != "utf-8":
                         logger.debug(f"Detected non-UTF-8 encoding: {file_encoding}")
 
-                    # Read CSV header to determine columns
-                    async with aiofiles.open(csv_file, encoding=file_encoding) as f:
-                        reader = aiocsv.readers.AsyncReader(f, delimiter=";")
-                        headers = await anext(reader)
-
-                    # Create mapping of original headers to sanitized column names
-                    column_mapping = {header: sanitize_column_name(header) for header in headers}
-
-                    # Report any renamed columns
-                    if logger.level == logging.DEBUG:
-                        renamed_cols = [
-                            (orig, san)
-                            for orig, san in column_mapping.items()
-                            if orig.lower() != san
-                        ]
-                        if renamed_cols:
-                            logging.debug(f"[yellow]Renamed {len(renamed_cols)} columns:[/yellow]")
-                            for orig, san in renamed_cols[:5]:  # Show first 5
-                                logging.debug(f"    {orig} → {san}")
-                            if len(renamed_cols) > 5:
-                                logging.debug(f"    ... and {len(renamed_cols) - 5} more")
+                    # Parse CSV headers and create column mappings
+                    headers, column_mapping = await _parse_csv_headers(csv_file, file_encoding)
 
                     # Identify coordinate columns (using sanitized names)
-                    x_col = None
-                    y_col = None
-                    for header in headers:
-                        sanitized = column_mapping[header]
-                        # Check for x coordinate column (starts with x_mp or is exactly named with coordinate pattern)
-                        if (
-                            sanitized.startswith("x_mp")
-                            or sanitized.startswith("_x_mp")
-                            or "_x_mp_" in sanitized
-                        ):
-                            x_col = sanitized
-                        # Check for y coordinate column (starts with y_mp or is exactly named with coordinate pattern)
-                        elif (
-                            sanitized.startswith("y_mp")
-                            or sanitized.startswith("_y_mp")
-                            or "_y_mp_" in sanitized
-                        ):
-                            y_col = sanitized
-
-                    # Debug output for coordinate detection
-                    if x_col and y_col:
-                        logger.debug(f"Detected coordinate columns: {x_col}, {y_col}")
-                    else:
-                        logger.debug(
-                            f"No coordinate columns detected (x_col={x_col}, y_col={y_col})"
-                        )
+                    x_col, y_col = _detect_coordinate_columns(headers, column_mapping)
 
                     async with conn.transaction():
-                        # Always drop temp table if it exists
-                        await conn.execute(f"DROP TABLE IF EXISTS {temp_table_name} CASCADE;")
+                        # Check table existence and prepare for import
+                        if not await self._check_and_prepare_table(
+                            conn, table_name, full_table_name, temp_table_name
+                        ):
+                            continue
 
-                        # Check if final table exists and if it should be recreated
-                        table_exists = await conn.fetchval(
-                            """
-                            SELECT EXISTS (
-                                SELECT FROM information_schema.tables
-                                WHERE table_schema = $1 AND table_name = $2
-                            )
-                            """,
-                            self.db_config.schema,
+                        # Create temporary table and load CSV data
+                        await self._create_temp_table_and_load_data(
+                            conn,
+                            csv_file,
+                            temp_table_name,
                             table_name,
+                            headers,
+                            column_mapping,
+                            file_encoding,
                         )
-
-                        if table_exists:
-                            if self.db_config.drop_existing:
-                                await conn.execute(f"DROP TABLE {full_table_name} CASCADE;")
-                                logger.debug("[yellow]Dropped existing table[/yellow]")
-                            else:
-                                logger.debug(
-                                    "  [yellow]Table already exists, skipping. Use --drop-existing to recreate.[/yellow]"
-                                )
-                                continue
-
-                        # Create temporary table with all columns as TEXT (sanitized names)
-                        logger.debug(f"Creating temporary table: {temp_table_name}")
-                        temp_columns_def = [f"{column_mapping[h]} TEXT" for h in headers]
-                        create_temp_sql = (
-                            f"CREATE TABLE {temp_table_name} ({', '.join(temp_columns_def)});"
-                        )
-                        await conn.execute(create_temp_sql)
-
-                        # Map Python encoding to PostgreSQL encoding name
-                        pg_encoding_map = {
-                            "utf-8": "UTF8",
-                            "iso-8859-1": "LATIN1",
-                            "windows-1252": "WIN1252",
-                            "cp1252": "WIN1252",
-                        }
-                        pg_encoding = pg_encoding_map.get(file_encoding, "UTF8")
-
-                        # Use COPY to bulk load CSV - need to pass schema and table separately
-                        logger.debug(
-                            f"Copying data to temporary table using encoding: {pg_encoding}"
-                        )
-                        await conn.copy_to_table(
-                            f"{table_name}_temp",
-                            source=str(csv_file),
-                            schema_name=self.db_config.schema,
-                            delimiter=";",
-                            null="-",
-                            header=True,
-                            encoding=pg_encoding,
-                            format="csv",
-                        )
-
-                        # Get row count from temp table
-                        if logger.level == logging.DEBUG:
-                            row_count = await conn.fetchval(
-                                f"SELECT COUNT(*) FROM {temp_table_name};"
-                            )
-                            logger.debug(f"Row count: {row_count}")
 
                         # Detect data types for columns
-                        column_types = {}
-                        for header in headers:
-                            col_name = column_mapping[header]
-                            # Skip coordinate columns if we're creating geometry
-                            if x_col and y_col and col_name in [x_col, y_col]:
-                                continue
-                            # Detect type for this column
-                            detected_type = await detect_column_type(
-                                conn, temp_table_name, col_name
-                            )
-                            column_types[col_name] = detected_type
-
-                        # Report detected types
-                        numeric_cols = {
-                            col: typ for col, typ in column_types.items() if typ != "TEXT"
-                        }
-                        if numeric_cols:
-                            logger.debug(
-                                f"Detected {len(numeric_cols)} numeric columns "
-                                f"({sum(1 for t in numeric_cols.values() if t == 'INTEGER')} INTEGER, "
-                                f"{sum(1 for t in numeric_cols.values() if t == 'DOUBLE PRECISION')} DOUBLE PRECISION)"
-                            )
+                        column_types = await _detect_column_types(
+                            conn, temp_table_name, headers, column_mapping, x_col, y_col
+                        )
 
                         # Create final table with detected types (using sanitized names)
-                        final_columns_def = []
-                        for header in headers:
-                            col_name = column_mapping[header]
-                            # Skip coordinate columns if we're creating geometry
-                            if x_col and y_col and col_name in [x_col, y_col]:
-                                continue
-                            col_type = column_types.get(col_name, "TEXT")
-                            final_columns_def.append(f"{col_name} {col_type}")
-
-                        # Add geometry column if we have coordinates
-                        if x_col and y_col:
-                            final_columns_def.append(f"geom GEOMETRY(Point, {self.db_config.srid})")
+                        final_columns_def = _build_final_schema(
+                            headers, column_mapping, column_types, x_col, y_col, self.db_config.srid
+                        )
 
                         # Create the final table (we already checked if it exists above)
                         logger.debug(f"Creating final table: {full_table_name}")
@@ -681,69 +370,15 @@ class FetchManager:
                         await conn.execute(create_final_sql)
 
                         # Prepare column lists for INSERT INTO ... SELECT (using sanitized names)
-                        select_cols = []
-                        insert_cols = []
-
-                        for header in headers:
-                            col_name = column_mapping[header]
-                            # Skip coordinate columns if we're creating geometry
-                            if x_col and y_col and col_name in [x_col, y_col]:
-                                continue
-
-                            col_type = column_types.get(col_name, "TEXT")
-
-                            # Build the SELECT expression based on the target type
-                            if col_type == "INTEGER":
-                                # Convert TEXT to INTEGER, handling German decimal format and NULLs
-                                select_expr = f"""
-                                    NULLIF(
-                                        REPLACE(
-                                            REPLACE({col_name}, ',', '.'),
-                                            '{NULL_VALUE}',
-                                            ''), '')::INTEGER
-                                """
-                            elif col_type == "DOUBLE PRECISION":
-                                # Convert TEXT to DOUBLE PRECISION, handling German decimal format and NULLs
-                                select_expr = f"""
-                                    NULLIF(
-                                        REPLACE(
-                                            REPLACE({col_name}, ',', '.'),
-                                            '{NULL_VALUE}',
-                                            ''), '')::DOUBLE PRECISION
-                                """
-                            else:
-                                # Keep as TEXT
-                                select_expr = col_name
-
-                            select_cols.append(select_expr)
-                            insert_cols.append(col_name)
-
-                        # Add geometry transformation if we have coordinates
-                        if x_col and y_col:
-                            logger.debug(f"Adding geometry column with SRID {self.db_config.srid}")
-                            # Source data is in SRID 3035 (ETRS89-extended / LAEA Europe)
-                            source_srid = 3035
-
-                            # Create point geometry with source SRID
-                            point_expr = (
-                                f"ST_SetSRID(ST_MakePoint("
-                                f"NULLIF(REPLACE({x_col}, ',', '.'), '')::double precision, "
-                                f"NULLIF(REPLACE({y_col}, ',', '.'), '')::double precision"
-                                f"), {source_srid})"
-                            )
-
-                            # Transform to target SRID if different from source
-                            if self.db_config.srid != source_srid:
-                                logger.debug(
-                                    f"Transforming coordinates from SRID {source_srid} "
-                                    f"to SRID {self.db_config.srid}"
-                                )
-                                geom_expr = f"ST_Transform({point_expr}, {self.db_config.srid})"
-                            else:
-                                geom_expr = point_expr
-
-                            select_cols.append(geom_expr)
-                            insert_cols.append("geom")
+                        select_cols, insert_cols, id_column = _build_data_transform_expressions(
+                            headers,
+                            column_mapping,
+                            column_types,
+                            x_col,
+                            y_col,
+                            source_srid=3035,
+                            target_srid=self.db_config.srid,
+                        )
 
                         # Insert from temp to final table with geometry transformation
                         logger.debug("Inserting data from temporary table to final table")
@@ -754,14 +389,10 @@ class FetchManager:
                         """
                         await conn.execute(insert_from_temp_sql)
 
-                        # Create spatial index if we have geometry
-                        if x_col and y_col:
-                            logger.debug("Creating spatial index on geometry column")
-                            index_name = f"{table_name}_geom_idx"
-                            await conn.execute(
-                                f"CREATE INDEX IF NOT EXISTS {index_name} "
-                                f"ON {full_table_name} USING GIST (geom);"
-                            )
+                        # Create indexes on geometry and ID columns
+                        await _create_indexes(
+                            conn, table_name, full_table_name, x_col, y_col, id_column
+                        )
 
                         # Drop temporary table
                         logger.debug(f"Dropping temporary table: {temp_table_name}")
@@ -779,6 +410,116 @@ class FetchManager:
 
                 finally:
                     self.database_queue.task_done()
+
+    async def _check_and_prepare_table(
+        self, conn: asyncpg.Connection, table_name: str, full_table_name: str, temp_table_name: str
+    ) -> bool:
+        """Check table existence and prepare for import.
+
+        Parameters
+        ----------
+        conn : asyncpg.Connection
+            Database connection (within transaction)
+        table_name : str
+            Simple table name
+        full_table_name : str
+            Schema-qualified table name
+        temp_table_name : str
+            Schema-qualified temporary table name
+
+        Returns
+        -------
+        bool
+            True if import should proceed, False if should skip
+        """
+        # Always drop temp table if it exists
+        await conn.execute(f"DROP TABLE IF EXISTS {temp_table_name} CASCADE;")
+
+        # Check if final table exists and if it should be recreated
+        table_exists = await conn.fetchval(
+            """
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables
+                WHERE table_schema = $1 AND table_name = $2
+            )
+            """,
+            self.db_config.schema,
+            table_name,
+        )
+
+        if table_exists:
+            if self.db_config.drop_existing:
+                await conn.execute(f"DROP TABLE {full_table_name} CASCADE;")
+                logger.debug("[yellow]Dropped existing table[/yellow]")
+            else:
+                logger.debug(
+                    "  [yellow]Table already exists, skipping. Use --drop-existing to recreate.[/yellow]"
+                )
+                return False
+
+        return True
+
+    async def _create_temp_table_and_load_data(
+        self,
+        conn: asyncpg.Connection,
+        csv_file: Path,
+        temp_table_name: str,
+        table_name: str,
+        headers: list[str],
+        column_mapping: dict[str, str],
+        file_encoding: str,
+    ) -> None:
+        """Create temporary table and load CSV data using COPY.
+
+        Parameters
+        ----------
+        conn : asyncpg.Connection
+            Database connection (within transaction)
+        csv_file : Path
+            Path to CSV file to import
+        temp_table_name : str
+            Schema-qualified temporary table name
+        table_name : str
+            Simple table name (for copy_to_table)
+        headers : list[str]
+            Original CSV headers
+        column_mapping : dict[str, str]
+            Mapping of original to sanitized column names
+        file_encoding : str
+            Detected file encoding
+        """
+        # Create temporary table with all columns as TEXT (sanitized names)
+        logger.debug(f"Creating temporary table: {temp_table_name}")
+        temp_columns_def = [f"{column_mapping[h]} TEXT" for h in headers]
+        create_temp_sql = f"CREATE TABLE {temp_table_name} ({', '.join(temp_columns_def)});"
+        await conn.execute(create_temp_sql)
+
+        # Map Python encoding to PostgreSQL encoding name
+        pg_encoding_map = {
+            "utf-8": "UTF8",
+            "iso-8859-1": "LATIN1",
+            "windows-1252": "WIN1252",
+            "cp1252": "WIN1252",
+        }
+        pg_encoding = pg_encoding_map.get(file_encoding, "UTF8")
+
+        # Use COPY to bulk load CSV - need to pass schema and table separately
+        logger.debug(f"Copying data to temporary table using encoding: {pg_encoding}")
+        await conn.copy_to_table(
+            f"{table_name}_temp",
+            source=str(csv_file),
+            schema_name=self.db_config.schema,
+            delimiter=";",
+            null="-",
+            header=True,
+            encoding=pg_encoding,
+            format="csv",
+        )
+
+        # Get row count from temp table
+        if logger.level == logging.DEBUG:
+            row_count = await conn.fetchval(f"SELECT COUNT(*) FROM {temp_table_name};")
+            logger.debug(f"Row count: {row_count}")
 
     async def coordinator(self):
         """
@@ -806,3 +547,492 @@ class FetchManager:
 
         # Wait for all items in database queue to be processed
         await self.database_queue.join()
+
+
+async def _detect_column_types(
+    conn: asyncpg.Connection,
+    temp_table_name: str,
+    headers: list[str],
+    column_mapping: dict[str, str],
+    x_col: str | None,
+    y_col: str | None,
+) -> dict[str, str]:
+    """Detect appropriate PostgreSQL types for each column.
+
+    Parameters
+    ----------
+    conn : asyncpg.Connection
+        Database connection (within transaction)
+    temp_table_name : str
+        Temporary table to analyze
+    headers : list[str]
+        Original CSV headers
+    column_mapping : dict[str, str]
+        Mapping of original to sanitized column names
+    x_col : str | None
+        X coordinate column (skip type detection)
+    y_col : str | None
+        Y coordinate column (skip type detection)
+
+    Returns
+    -------
+    dict[str, str]
+        Mapping of column names to PostgreSQL types (INTEGER, DOUBLE PRECISION, or TEXT)
+    """
+    column_types = {}
+    for header in headers:
+        col_name = column_mapping[header]
+        # Skip coordinate columns if we're creating geometry
+        if x_col and y_col and col_name in [x_col, y_col]:
+            continue
+        # Detect type for this column
+        detected_type = await detect_column_type(conn, temp_table_name, col_name)
+        column_types[col_name] = detected_type
+
+    # Report detected types
+    numeric_cols = {col: typ for col, typ in column_types.items() if typ != "TEXT"}
+    if numeric_cols:
+        logger.debug(
+            f"Detected {len(numeric_cols)} numeric columns "
+            f"({sum(1 for t in numeric_cols.values() if t == 'INTEGER')} INTEGER, "
+            f"{sum(1 for t in numeric_cols.values() if t == 'DOUBLE PRECISION')} DOUBLE PRECISION)"
+        )
+
+    return column_types
+
+
+async def _create_indexes(
+    conn: asyncpg.Connection,
+    table_name: str,
+    full_table_name: str,
+    x_col: str | None,
+    y_col: str | None,
+    id_column: str | None,
+) -> None:
+    """Create indexes on geometry and ID columns.
+
+    Parameters
+    ----------
+    conn : asyncpg.Connection
+        Database connection (within transaction)
+    table_name : str
+        Simple table name
+    full_table_name : str
+        Schema-qualified table name
+    x_col : str | None
+        X coordinate column (determines if spatial index needed)
+    y_col : str | None
+        Y coordinate column (determines if spatial index needed)
+    id_column : str | None
+        ID column name (if present)
+    """
+    # Create spatial index if we have geometry
+    if x_col and y_col:
+        logger.debug("Creating spatial index on geometry column")
+        index_name = f"{table_name}_geom_idx"
+        await conn.execute(
+            f"CREATE INDEX IF NOT EXISTS {index_name} ON {full_table_name} USING GIST (geom);"
+        )
+
+    # Create B-tree index on ID column if present
+    if id_column is not None:
+        logger.debug(f"Creating index on {table_name} for {id_column}")
+        index_name = f"{table_name}_{id_column}_idx"
+        await conn.execute(
+            f"CREATE INDEX IF NOT EXISTS {index_name} ON {full_table_name} ({id_column});"
+        )
+
+
+def _detect_coordinate_columns(
+    headers: list[str], column_mapping: dict[str, str]
+) -> tuple[str | None, str | None]:
+    """Detect x and y coordinate columns for spatial data.
+
+    Parameters
+    ----------
+    headers : list[str]
+        Original CSV headers
+    column_mapping : dict[str, str]
+        Mapping of original to sanitized column names
+
+    Returns
+    -------
+    tuple[str | None, str | None]
+        Sanitized x column name and y column name (or None if not found)
+    """
+    x_col = None
+    y_col = None
+    for header in headers:
+        sanitized = column_mapping[header]
+        # Check for x coordinate column (starts with x_mp or is exactly named with coordinate pattern)
+        if sanitized.startswith("x_mp") or sanitized.startswith("_x_mp") or "_x_mp_" in sanitized:
+            x_col = sanitized
+        # Check for y coordinate column (starts with y_mp or is exactly named with coordinate pattern)
+        elif sanitized.startswith("y_mp") or sanitized.startswith("_y_mp") or "_y_mp_" in sanitized:
+            y_col = sanitized
+
+    # Debug output for coordinate detection
+    if x_col and y_col:
+        logger.debug(f"Detected coordinate columns: {x_col}, {y_col}")
+    else:
+        logger.debug(f"No coordinate columns detected (x_col={x_col}, y_col={y_col})")
+
+    return x_col, y_col
+
+
+def _build_final_schema(
+    headers: list[str],
+    column_mapping: dict[str, str],
+    column_types: dict[str, str],
+    x_col: str | None,
+    y_col: str | None,
+    srid: int,
+) -> list[str]:
+    """Build final table schema from detected types.
+
+    Parameters
+    ----------
+    headers : list[str]
+        Original CSV headers
+    column_mapping : dict[str, str]
+        Mapping of original to sanitized column names
+    column_types : dict[str, str]
+        Detected PostgreSQL types
+    x_col : str | None
+        X coordinate column
+    y_col : str | None
+        Y coordinate column
+    srid : int
+        Spatial reference system ID
+
+    Returns
+    -------
+    list[str]
+        Column definitions for CREATE TABLE statement
+    """
+    final_columns_def = []
+    for header in headers:
+        col_name = column_mapping[header]
+        # Skip coordinate columns if we're creating geometry
+        if x_col and y_col and col_name in [x_col, y_col]:
+            continue
+        col_type = column_types.get(col_name, "TEXT")
+        final_columns_def.append(f"{col_name} {col_type}")
+
+    # Add geometry column if we have coordinates
+    if x_col and y_col:
+        final_columns_def.append(f"geom GEOMETRY(Point, {srid})")
+
+    return final_columns_def
+
+
+def _build_data_transform_expressions(
+    headers: list[str],
+    column_mapping: dict[str, str],
+    column_types: dict[str, str],
+    x_col: str | None,
+    y_col: str | None,
+    source_srid: int,
+    target_srid: int,
+) -> tuple[list[str], list[str], str | None]:
+    """Build SELECT and INSERT expressions for data transformation.
+
+    Parameters
+    ----------
+    headers : list[str]
+        Original CSV headers
+    column_mapping : dict[str, str]
+        Mapping of original to sanitized column names
+    column_types : dict[str, str]
+        Detected PostgreSQL types
+    x_col : str | None
+        X coordinate column
+    y_col : str | None
+        Y coordinate column
+    source_srid : int
+        Source spatial reference system ID (3035)
+    target_srid : int
+        Target spatial reference system ID
+
+    Returns
+    -------
+    tuple[list[str], list[str], str | None]
+        SELECT expressions, INSERT column names, and ID column name (if found)
+    """
+    select_cols = []
+    insert_cols = []
+    # When an ID column is present we use this later to create the index on it
+    id_column = None
+
+    for header in headers:
+        col_name = column_mapping[header]
+        # Skip coordinate columns if we're creating geometry
+        if x_col and y_col and col_name in [x_col, y_col]:
+            continue
+
+        col_type = column_types.get(col_name, "TEXT")
+
+        if col_name.startswith(ID_COLUMN_PREFIX):
+            id_column = col_name
+            select_expr = f"{col_name}::VARCHAR(60)"
+
+        # Build the SELECT expression based on the target type
+        elif col_type == "INTEGER":
+            # Convert TEXT to INTEGER, handling German decimal format and NULLs
+            select_expr = f"""
+                NULLIF(
+                    REPLACE(
+                        REPLACE({col_name}, ',', '.'),
+                        '{NULL_VALUE}',
+                        ''), '')::INTEGER
+            """
+        elif col_type == "DOUBLE PRECISION":
+            # Convert TEXT to DOUBLE PRECISION, handling German decimal format and NULLs
+            select_expr = f"""
+                NULLIF(
+                    REPLACE(
+                        REPLACE({col_name}, ',', '.'),
+                        '{NULL_VALUE}',
+                        ''), '')::DOUBLE PRECISION
+            """
+        else:
+            # Keep as TEXT
+            select_expr = col_name
+
+        select_cols.append(select_expr)
+        insert_cols.append(col_name)
+
+    # Add geometry transformation if we have coordinates
+    if x_col and y_col:
+        logger.debug(f"Adding geometry column with SRID {target_srid}")
+        # Create point geometry with source SRID
+        point_expr = (
+            f"ST_SetSRID(ST_MakePoint("
+            f"NULLIF(REPLACE({x_col}, ',', '.'), '')::double precision, "
+            f"NULLIF(REPLACE({y_col}, ',', '.'), '')::double precision"
+            f"), {source_srid})"
+        )
+
+        # Transform to target SRID if different from source
+        if target_srid != source_srid:
+            logger.debug(f"Transforming coordinates from SRID {source_srid} to SRID {target_srid}")
+            geom_expr = f"ST_Transform({point_expr}, {target_srid})"
+        else:
+            geom_expr = point_expr
+
+        select_cols.append(geom_expr)
+        insert_cols.append("geom")
+
+    return select_cols, insert_cols, id_column
+
+
+async def _parse_csv_headers(
+    csv_file: Path, file_encoding: str
+) -> tuple[list[str], dict[str, str]]:
+    """Parse CSV headers and create sanitized column name mappings.
+
+    Parameters
+    ----------
+    csv_file : Path
+        Path to the CSV file
+    file_encoding : str
+        Detected encoding of the file
+
+    Returns
+    -------
+    tuple[list[str], dict[str, str]]
+        Original headers list and mapping of original to sanitized column names
+    """
+    # Read CSV header to determine columns
+    async with aiofiles.open(csv_file, encoding=file_encoding) as f:
+        reader = aiocsv.readers.AsyncReader(f, delimiter=";")
+        headers = await anext(reader)
+
+    # Create mapping of original headers to sanitized column names
+    column_mapping = {header: sanitize_column_name(header) for header in headers}
+
+    # Report any renamed columns
+    if logger.level == logging.DEBUG:
+        renamed_cols = [(orig, san) for orig, san in column_mapping.items() if orig.lower() != san]
+        if renamed_cols:
+            logging.debug(f"[yellow]Renamed {len(renamed_cols)} columns:[/yellow]")
+            for orig, san in renamed_cols[:5]:  # Show first 5
+                logging.debug(f"    {orig} → {san}")
+            if len(renamed_cols) > 5:
+                logging.debug(f"    ... and {len(renamed_cols) - 5} more")
+
+    return headers, column_mapping
+
+
+def sanitize_column_name(name: str) -> str:
+    """Sanitize column name to be PostgreSQL-compliant.
+
+    PostgreSQL identifiers cannot start with a digit.
+    This function prefixes such names with an underscore.
+    """
+    name = name.lower()
+    # If the name starts with a digit, prefix with underscore
+    if name and name[0].isdigit():
+        return f"_{name}"
+    return name
+
+
+def sanitize_table_name(filename: str) -> str:
+    """Sanitize table name to be PostgreSQL-compliant.
+
+    PostgreSQL table names have a 63-character limit.
+    This function removes redundant prefixes/suffixes and normalizes the name.
+    """
+    name = filename.lower().replace("-", "_").replace(" ", "_")
+
+    # Remove common redundant prefixes and suffixes
+    name = name.replace("zensus2022_", "")
+    name = name.replace("_gitter", "")
+
+    # Ensure it's not too long (PostgreSQL limit is 63 chars)
+    if len(name) > 63:
+        name = name[:63]
+
+    return name
+
+
+async def detect_file_encoding(file_path: Path) -> str:
+    """Detect the encoding of a CSV file.
+
+    Tries common encodings and returns the first one that works.
+    """
+    encodings = ["utf-8", "iso-8859-1", "windows-1252", "cp1252"]
+
+    for encoding in encodings:
+        try:
+            async with aiofiles.open(file_path, encoding=encoding) as f:
+                # Try to read first 10 lines
+                for _ in range(10):
+                    await f.readline()
+            return encoding
+        except (UnicodeDecodeError, UnicodeError):
+            continue
+
+    # Default to iso-8859-1 which accepts all byte values
+    return "iso-8859-1"
+
+
+async def detect_column_type(conn: asyncpg.Connection, table_name: str, column_name: str) -> str:
+    """Detect the appropriate PostgreSQL type for a column.
+
+    Checks if column values can be converted to INTEGER or DOUBLE PRECISION.
+    Returns 'INTEGER', 'DOUBLE PRECISION', or 'TEXT'.
+
+    These datasets have a special value for null, and we accommodate for that.
+    """
+    # Replace commas with dots for German decimal format
+    # Check if all non-null, non-empty values can be cast to numeric types
+    row = await conn.fetchrow(
+        rf"""
+        SELECT
+            COUNT(*) as total,
+            COUNT(CASE WHEN {column_name} = '{NULL_VALUE}' THEN 1 END) as null_values,
+            COUNT(CASE WHEN {column_name} IS NOT NULL AND {column_name} != '' THEN 1 END) as non_empty,
+            COUNT(CASE
+                WHEN {column_name} IS NOT NULL AND {column_name} != ''
+                AND REPLACE({column_name}, ',', '.') ~ '^-?[0-9]+$'
+                THEN 1
+            END) as integer_count,
+            COUNT(CASE
+                WHEN {column_name} IS NOT NULL AND {column_name} != ''
+                AND REPLACE({column_name}, ',', '.') ~ '^-?[0-9]+\.?[0-9]*$'
+                THEN 1
+            END) as numeric_count
+        FROM {table_name}
+        """
+    )
+    total, null_values, non_empty, integer_count, numeric_count = row
+
+    if non_empty == 0:
+        return "TEXT"
+
+    if integer_count + null_values == non_empty:
+        return "INTEGER"
+
+    if numeric_count + null_values == non_empty:
+        return "DOUBLE PRECISION"
+
+    return "TEXT"
+
+
+class DatabaseConfig(NamedTuple):
+    """Hold database configuration."""
+
+    host: str
+    port: int
+    database: str
+    user: str
+    password: str | None
+    schema: str
+    srid: int
+    drop_existing: bool
+
+
+async def get_db_pool(db_config: DatabaseConfig) -> asyncpg.Pool:
+    """
+    Create a database connection pool and make sure the database is ready for import.
+
+    Returns a connection pool instead of a single connection to support concurrent workers.
+    """
+    # Test database connection first
+    try:
+        logger.info(
+            f"Connecting to PostgreSQL database '{db_config.database}' at {db_config.host}:{db_config.port}"
+        )
+        test_conn = await asyncpg.connect(
+            user=db_config.user,
+            password=db_config.password,
+            database=db_config.database,
+            host=db_config.host,
+            port=db_config.port,
+        )
+        logger.info(f"Successfully connected to PostgreSQL database '{db_config.database}'")
+    except asyncpg.PostgresError as e:
+        logger.error(f"Error connecting to PostgreSQL: {e!s}")
+        raise typer.Exit(1)
+
+    # Ensure chosen schema exists
+    try:
+        logger.debug(f"Checking if schema '{db_config.schema}' exists")
+        schema_exists = await test_conn.fetchval(
+            """
+            SELECT EXISTS(
+                SELECT schema_name
+                FROM information_schema.schemata where schema_name = $1
+            )
+            """,
+            db_config.schema,
+        )
+        if not schema_exists:
+            logger.error(f"Schema does not exist: {db_config.schema}")
+            await test_conn.close()
+            raise typer.Exit(1)
+        logger.debug(f"Schema '{db_config.schema}' exists")
+    except asyncpg.PostgresError as e:
+        logger.error(f"PostgreSQL error: {e!s}")
+        await test_conn.close()
+        raise typer.Exit(1)
+
+    await test_conn.close()
+
+    # Create connection pool for concurrent workers
+    try:
+        pool = await asyncpg.create_pool(
+            user=db_config.user,
+            password=db_config.password,
+            database=db_config.database,
+            host=db_config.host,
+            port=db_config.port,
+            min_size=2,
+            max_size=10,
+        )
+        logger.debug("Created database connection pool")
+        return pool
+    except asyncpg.PostgresError as e:
+        logger.error(f"Error creating connection pool: {e!s}")
+        raise typer.Exit(1)

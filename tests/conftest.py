@@ -7,8 +7,17 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from typer.testing import CliRunner
 
 from zensus2pgsql.commands.create import DatabaseConfig
+
+
+@pytest.fixture
+def cli_runner():
+    """Mock zensus2pgsql cli."""
+    runner = CliRunner()
+
+    return runner
 
 
 @pytest.fixture

@@ -15,7 +15,6 @@ from zensus2pgsql.commands.create import (
     create,
     detect_column_type,
     detect_file_encoding,
-    detect_file_encoding_old,
     get_db_pool,
     sanitize_column_name,
     sanitize_table_name,
@@ -198,28 +197,6 @@ class TestDetectFileEncoding:
 
         encoding = await detect_file_encoding(temp_path)
         assert encoding == "utf-8"  # Empty file should be valid UTF-8
-
-
-class TestDetectFileEncodingOld:
-    """Tests for detect_file_encoding_old sync function."""
-
-    def test_detects_utf8_encoding(self, temp_csv_file):
-        """Test that UTF-8 files are correctly detected."""
-        encoding = detect_file_encoding_old(temp_csv_file)
-        assert encoding == "utf-8"
-
-    def test_detects_latin1_encoding(self, temp_csv_file_latin1):
-        """Test that ISO-8859-1 files are correctly detected."""
-        encoding = detect_file_encoding_old(temp_csv_file_latin1)
-        assert encoding in ["utf-8", "iso-8859-1"]
-
-    def test_empty_file(self):
-        """Test encoding detection on empty file."""
-        with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".csv") as f:
-            temp_path = Path(f.name)
-
-        encoding = detect_file_encoding_old(temp_path)
-        assert encoding == "utf-8"
 
 
 # =============================================================================
