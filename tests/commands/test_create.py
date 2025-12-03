@@ -421,9 +421,7 @@ class TestFetchManagerInit:
         assert manager.output_folder == Path("/tmp/test")
         assert manager.skip_existing is True
         assert manager.num_workers == 3
-        assert manager.failed == 0
-        assert manager.success == 0
-        assert manager.skipped == 0
+        assert manager.tables_created == 0
 
     def test_queues_created(
         self, mock_httpx_client, mock_asyncpg_pool, mock_progress, database_config
@@ -478,8 +476,7 @@ class TestFetchWorker:
             with patch("aiofiles.open", return_value=mock_file):
                 await manager.fetch_worker()
 
-            assert manager.success == 1
-            assert manager.failed == 0
+            assert mock_file.write.call_count == 2
 
     @pytest.mark.asyncio
     async def test_skip_existing_file(
@@ -503,10 +500,17 @@ class TestFetchWorker:
             await manager.fetch_queue.put(("https://example.com/existing.zip", "existing.zip"))
             await manager.fetch_queue.put(None)
 
-            await manager.fetch_worker()
+            # Mock aiofiles.open
+            mock_file = AsyncMock()
+            mock_file.__aenter__ = AsyncMock(return_value=mock_file)
+            mock_file.__aexit__ = AsyncMock(return_value=None)
+            mock_file.write = AsyncMock()
 
-            assert manager.skipped == 1
-            assert manager.success == 0
+            with patch("aiofiles.open", return_value=mock_file):
+                await manager.fetch_worker()
+
+            # Make sure nothing new was written
+            assert mock_file.write.call_count == 0
 
     @pytest.mark.asyncio
     async def test_download_failure_http_error(
@@ -555,8 +559,7 @@ class TestFetchWorker:
 
             await manager.fetch_worker()
 
-            assert manager.failed == 1
-            assert manager.success == 0
+            assert mock_client.stream.call_count == 1
 
     @pytest.mark.asyncio
     async def test_sentinel_shutdown(
