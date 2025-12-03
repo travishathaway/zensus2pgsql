@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from zensus2pgsql.commands.create import (
+    CreateCommandConfig,
     DatabaseConfig,
     FetchManager,
     collect_wrapper,
@@ -1207,7 +1208,10 @@ class TestCollectCommand:
             mock_manager.failed = 0
             mock_manager_class.return_value = mock_manager
 
-            await collect_wrapper(["all"], skip_existing=True, db_config=database_config)
+            cmd_config = CreateCommandConfig(
+                tables=["all"], skip_existing=True, quiet=False, verbose=0
+            )
+            await collect_wrapper(cmd_config, database_config)
 
             mock_manager.start.assert_called_once()
             mock_manager.remove_temp_dir.assert_called_once()
@@ -1239,7 +1243,10 @@ class TestCollectCommand:
             mock_manager.failed = 0
             mock_manager_class.return_value = mock_manager
 
-            await collect_wrapper(["test_dataset1"], skip_existing=True, db_config=database_config)
+            cmd_config = CreateCommandConfig(
+                tables=["test_dataset1"], skip_existing=True, quiet=False, verbose=0
+            )
+            await collect_wrapper(cmd_config, database_config)
 
             mock_manager.start.assert_called_once()
 
@@ -1270,8 +1277,11 @@ class TestCollectCommand:
             mock_manager.failed = 0
             mock_manager_class.return_value = mock_manager
 
+            cmd_config = CreateCommandConfig(
+                tables=["all"], skip_existing=True, quiet=False, verbose=0
+            )
             with pytest.raises(Exception, match="Test error"):
-                await collect_wrapper(["all"], skip_existing=True, db_config=database_config)
+                await collect_wrapper(cmd_config, database_config)
 
             # Cleanup should still be called
             mock_manager.remove_temp_dir.assert_called_once()
@@ -1566,10 +1576,11 @@ class TestCollectCLI:
                 drop_existing=False,
                 skip_existing=True,
                 verbose=0,
+                quiet=False,
             )
 
             # Verify logging was configured
-            mock_configure.assert_called_once_with(0)
+            mock_configure.assert_called_once_with(0, False)
 
             # Verify cache dir was created
             mock_cache.assert_called_once()

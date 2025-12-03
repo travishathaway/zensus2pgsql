@@ -70,3 +70,5 @@ dist/
 
 # pixi
 .pixi/
+
+.mcp.json

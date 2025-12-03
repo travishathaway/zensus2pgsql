@@ -37,6 +37,16 @@ from rich.progress import (
 from ..cache import CACHE, create_cache_dir
 from ..constants import GITTERDATEN_FILES
 from ..logging import configure_logging, logger
+from ._base import (
+    DatabaseHost,
+    DatabaseName,
+    DatabasePassword,
+    DatabasePort,
+    DatabaseSchema,
+    DatabaseUser,
+    QuietOption,
+    VerboseOption,
+)
 
 NULL_VALUE = "–"  # WARNING! This is not the normal dash -> "-"!
 
@@ -44,20 +54,36 @@ NULL_VALUE = "–"  # WARNING! This is not the normal dash -> "-"!
 ID_COLUMN_PREFIX = "gitter_id"
 
 
+class DatabaseConfig(NamedTuple):
+    """Hold database configuration."""
+
+    host: str
+    port: int
+    database: str
+    user: str
+    password: str | None
+    schema: str
+    srid: int
+    drop_existing: bool
+
+
+class CreateCommandConfig(NamedTuple):
+    """Hold create command configuration."""
+
+    quiet: bool
+    tables: list[str]
+    skip_existing: bool
+    verbose: int
+
+
 def create(
     tables: list[str] = typer.Argument(["all"]),
-    host: str = typer.Option("localhost", "--host", "-h", help="PostgreSQL host"),
-    port: int = typer.Option(5432, "--port", "-p", help="PostgreSQL port"),
-    database: str = typer.Option("zensus", "--database", "--db", help="PostgreSQL database name"),
-    user: str = typer.Option("postgres", "--user", "-u", help="PostgreSQL user"),
-    password: str | None = typer.Option(
-        None,
-        "--password",
-        help="PostgreSQL password (will prompt if not provided)",
-        prompt=True,
-        hide_input=True,
-    ),
-    schema: str = typer.Option("zensus", "--schema", "-s", help="PostgreSQL schema name"),
+    host: str = DatabaseHost,
+    port: int = DatabasePort,
+    database: str = DatabaseName,
+    user: str = DatabaseUser,
+    password: str | None = DatabasePassword,
+    schema: str = DatabaseSchema,
     srid: int = typer.Option(
         3035,
         "--srid",
@@ -69,13 +95,16 @@ def create(
     skip_existing: bool = typer.Option(
         True, "--skip-existing/--overwrite", help="Skip files that already exist"
     ),
-    verbose: int = typer.Option(
-        0, "--verbose", "-v", count=True, help="Increase verbosity (-v for INFO, -vv for DEBUG)"
-    ),
+    verbose: int = VerboseOption,
+    quiet: bool = QuietOption,
 ) -> None:
     """Download, extract and import Zensus 2022 Gitterdaten (grid data)."""
     # Configure logging based on verbosity
-    configure_logging(verbose)
+    cmd_config = CreateCommandConfig(
+        tables=tables, skip_existing=skip_existing, quiet=quiet, verbose=verbose
+    )
+
+    configure_logging(verbose, quiet)
 
     # Make sure our cache directory exists
     create_cache_dir()
@@ -83,10 +112,10 @@ def create(
     db_config = DatabaseConfig(host, port, database, user, password, schema, srid, drop_existing)
 
     # Create output directory if it doesn't exist
-    asyncio.run(collect_wrapper(tables, skip_existing, db_config))
+    asyncio.run(collect_wrapper(cmd_config, db_config))
 
 
-async def collect_wrapper(tables: list[str], skip_existing: bool, db_config: "DatabaseConfig"):
+async def collect_wrapper(cmd_config: CreateCommandConfig, db_config: DatabaseConfig) -> None:
     """
     Encapsulate all async operations for the collect command
     """
@@ -95,12 +124,15 @@ async def collect_wrapper(tables: list[str], skip_existing: bool, db_config: "Da
     files_to_import: list[tuple[str, str]]
 
     # Build list of files to download and import
-    if tables == ["all"]:
+    if cmd_config.tables == ["all"]:
         files_to_import = [(f["name"], f["url"]) for f in GITTERDATEN_FILES]
     else:
-        files_to_import = [(f["name"], f["url"]) for f in GITTERDATEN_FILES if f["name"] in tables]
+        files_to_import = [
+            (f["name"], f["url"]) for f in GITTERDATEN_FILES if f["name"] in cmd_config.tables
+        ]
 
-    rprint(f"[cyan]Downloading and importing {len(files_to_import)} Gitterdaten files[/cyan]")
+    if not cmd_config.quiet:
+        rprint(f"[cyan]Downloading and importing {len(files_to_import)} Gitterdaten files[/cyan]")
 
     http_client = httpx.AsyncClient(http2=False)
 
@@ -112,6 +144,7 @@ async def collect_wrapper(tables: list[str], skip_existing: bool, db_config: "Da
             BarColumn(),
             MofNCompleteColumn(),  # Shows "X of Y" instead of percentage
             TimeRemainingColumn(),
+            disable=cmd_config.quiet,
         ) as progress:
             fetch_manager = FetchManager(
                 http_client,
@@ -120,15 +153,14 @@ async def collect_wrapper(tables: list[str], skip_existing: bool, db_config: "Da
                 db_pool,
                 db_config,
                 total=len(files_to_import),
-                skip_existing=skip_existing,
+                skip_existing=cmd_config.skip_existing,
             )
 
-            await fetch_manager.start(files_to_import, tables)
+            await fetch_manager.start(files_to_import, cmd_config.tables)
 
-        rprint("\n[bold cyan]Download Summary:[/bold cyan]")
-        rprint(f"  [green]✓ Downloaded: {fetch_manager.success}[/green]")
-        rprint(f"  [yellow]⊘ Skipped: {fetch_manager.skipped}[/yellow]")
-        rprint(f"  [red]✗ Failed: {fetch_manager.failed}[/red]")
+        if not cmd_config.quiet:
+            rprint("\n[bold cyan]Import summary:[/bold cyan]")
+            rprint(f"  [green]✓ Tables created: {fetch_manager.tables_created}[/green]")
     finally:
         fetch_manager.remove_temp_dir()
         await http_client.aclose()
@@ -174,13 +206,8 @@ class FetchManager:
             "[cyan]Importing...[/cyan]", total=self.database_task_total
         )
 
-        # File processing statistics
-        self.failed: int = 0
-        self.success: int = 0
-        self.skipped: int = 0
-
-        # Keeps track of errors
-        self.errors: list[str] = []
+        # Import processing statistics
+        self.tables_created: int = 0
 
         # Number of workers for fetch and database workers
         self.num_workers: int = num_workers
@@ -239,7 +266,6 @@ class FetchManager:
             # Skip if file exists and skip_existing is True
             if output_path.exists() and self.skip_existing:
                 logger.debug(f"Skipping existing file: {filename}")
-                self.skipped += 1
                 await self.extract_queue.put(output_path)
                 self.progress.update(self.fetch_task, advance=1)
                 self.fetch_queue.task_done()
@@ -260,11 +286,9 @@ class FetchManager:
                             self.progress.update(self.fetch_task, advance=1)
                             await self.extract_queue.put(output_path)
 
-                    self.success += 1
                     logger.debug(f"Successfully downloaded: {filename}")
 
             except Exception as e:
-                self.failed += 1
                 logger.error(f"Failed to download {filename}: {e}")
             finally:
                 self.fetch_queue.task_done()
@@ -404,6 +428,7 @@ class FetchManager:
                             f"  [green]✓ Imported {full_table_name}"
                             f"{' (with geometry)' if x_col and y_col else ''}[/green]"
                         )
+                        self.tables_created += 1
 
                 except Exception as e:
                     logger.error(f"  [red]✗ Failed to import {csv_file.name}: {e!s}[/red]")
@@ -958,19 +983,6 @@ async def detect_column_type(conn: asyncpg.Connection, table_name: str, column_n
         return "DOUBLE PRECISION"
 
     return "TEXT"
-
-
-class DatabaseConfig(NamedTuple):
-    """Hold database configuration."""
-
-    host: str
-    port: int
-    database: str
-    user: str
-    password: str | None
-    schema: str
-    srid: int
-    drop_existing: bool
 
 
 async def get_db_pool(db_config: DatabaseConfig) -> asyncpg.Pool:

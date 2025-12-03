@@ -22,7 +22,7 @@ logging.basicConfig(
 logger = logging.getLogger("zensus2pgsql")
 
 
-def configure_logging(verbosity: int) -> None:
+def configure_logging(verbosity: int, quiet: bool = False) -> None:
     """Configure logging level based on verbosity count.
 
     Args:
@@ -31,8 +31,11 @@ def configure_logging(verbosity: int) -> None:
             1: INFO
             2: DEBUG
             3+: DEBUG (same as 2)
+        quiet: If True (default), suppress logging messages
     """
-    if verbosity == 0:
+    if quiet:
+        level = logging.ERROR
+    elif verbosity == 0:
         level = logging.WARNING
     elif verbosity == 1:
         level = logging.INFO

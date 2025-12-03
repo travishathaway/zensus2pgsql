@@ -2,20 +2,23 @@ import psycopg
 import typer
 from rich import print as rprint
 
+from ._base import (
+    DatabaseHost,
+    DatabaseName,
+    DatabasePassword,
+    DatabasePort,
+    DatabaseSchema,
+    DatabaseUser,
+)
+
 
 def drop(
-    host: str = typer.Option("localhost", "--host", "-h", help="PostgreSQL host"),
-    port: int = typer.Option(5432, "--port", "-p", help="PostgreSQL port"),
-    database: str = typer.Option("zensus", "--database", "--db", help="PostgreSQL database name"),
-    user: str = typer.Option("postgres", "--user", "-u", help="PostgreSQL user"),
-    password: str | None = typer.Option(
-        None,
-        "--password",
-        help="PostgreSQL password (will prompt if not provided)",
-        prompt=True,
-        hide_input=True,
-    ),
-    schema: str = typer.Option("zensus", "--schema", "-s", help="PostgreSQL schema name"),
+    host: str = DatabaseHost,
+    port: int = DatabasePort,
+    database: str = DatabaseName,
+    user: str = DatabaseUser,
+    password: str | None = DatabasePassword,
+    schema: str = DatabaseSchema,
     confirm: bool = typer.Option(False, "--confirm", "-y", help="Skip confirmation prompt"),
 ) -> None:
     """Drop all tables in a PostgreSQL schema."""
