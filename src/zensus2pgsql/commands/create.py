@@ -37,6 +37,7 @@ from rich.progress import (
 from ..cache import CACHE, create_cache_dir
 from ..constants import GITTERDATEN_FILES
 from ..logging import configure_logging, logger
+from ..retry import RetryConfig, retry_async
 from ._base import (
     DatabaseHost,
     DatabaseName,
@@ -195,6 +196,15 @@ class FetchManager:
         self.db_config = db_config
         self.skip_existing = skip_existing
 
+        # Retry configuration for fetch operations
+        self.retry_config = RetryConfig(
+            max_attempts=4,  # 1 initial + 3 retries
+            base_delay=1.0,
+            max_delay=60.0,
+            backoff_multiplier=2.0,
+            jitter_range=0.2,
+        )
+
         # Progress bar tasks
         self.fetch_task = progress.add_task("[cyan]Downloading...[/cyan]", total=total)
         self.extract_task = progress.add_task("[cyan]Extracting...[/cyan]", total=total)
@@ -273,23 +283,35 @@ class FetchManager:
 
             try:
                 logger.info(f"Downloading: {filename}")
-                async with self.semaphore:  # TODO: this probably isn't needed any more
-                    async with self.client.stream(
-                        "GET", url, follow_redirects=True, timeout=60.0
-                    ) as response:
-                        response.raise_for_status()
 
-                        async with aiofiles.open(output_path, "wb") as f:
-                            async for chunk in response.aiter_bytes(chunk_size=8192):
-                                await f.write(chunk)
+                # Extract download logic into an async function for retry
+                async def download_file():
+                    async with self.semaphore:
+                        async with self.client.stream(
+                            "GET", url, follow_redirects=True, timeout=60.0
+                        ) as response:
+                            response.raise_for_status()
 
-                            self.progress.update(self.fetch_task, advance=1)
-                            await self.extract_queue.put(output_path)
+                            async with aiofiles.open(output_path, "wb") as f:
+                                async for chunk in response.aiter_bytes(chunk_size=8192):
+                                    await f.write(chunk)
 
-                    logger.debug(f"Successfully downloaded: {filename}")
+                # Execute with retry logic
+                await retry_async(
+                    download_file,
+                    config=self.retry_config,
+                    filename=filename,
+                )
+
+                # Only reached if download succeeded
+                self.progress.update(self.fetch_task, advance=1)
+                await self.extract_queue.put(output_path)
+                logger.debug(f"Successfully downloaded: {filename}")
 
             except Exception as e:
-                logger.error(f"Failed to download {filename}: {e}")
+                # This is reached only if all retries exhausted or non-retryable error
+                logger.error(f"Failed to download {filename} after retries: {e}")
+                # Note: No extract_queue.put() means extract_worker never sees this file
             finally:
                 self.fetch_queue.task_done()
 

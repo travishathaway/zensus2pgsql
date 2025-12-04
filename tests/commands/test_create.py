@@ -3,7 +3,7 @@
 import asyncio
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import httpx
 import pytest
@@ -1767,3 +1767,418 @@ a;b;c;d;e;f;g
                 await manager.database_worker()
             finally:
                 logger.setLevel(original_level)
+
+
+# =============================================================================
+# FETCH WORKER RETRY TESTS
+# =============================================================================
+
+
+class TestFetchWorkerRetry:
+    """Tests for fetch_worker retry logic with exponential backoff."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_worker_retries_on_timeout(
+        self, mock_asyncpg_pool, mock_progress, database_config
+    ):
+        """Test that fetch_worker retries on timeout errors."""
+
+        # Share state across retry attempts
+        attempt_counter = {"count": 0}
+
+        class TimeoutStreamResponse:
+            """Mock response that raises timeout on first attempt, succeeds on second."""
+
+            def raise_for_status(self):
+                pass
+
+            async def aiter_bytes(self, chunk_size):
+                attempt_counter["count"] += 1
+                if attempt_counter["count"] == 1:
+                    raise httpx.TimeoutException("Request timeout")
+                # Success on second attempt
+                yield b"test data chunk 1"
+                yield b"test data chunk 2"
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                return None
+
+        class TimeoutStreamContextManager:
+            """Mock context manager that returns timeout response."""
+
+            async def __aenter__(self):
+                return TimeoutStreamResponse()
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                return None
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mock_client = MagicMock()
+
+            manager = FetchManager(
+                client=mock_client,
+                output_folder=Path(tmpdir),
+                progress=mock_progress,
+                db_pool=mock_asyncpg_pool,
+                db_config=database_config,
+                skip_existing=False,
+            )
+
+            # Set up mock to return new context manager each time
+            def get_context_manager(*args, **kwargs):
+                return TimeoutStreamContextManager()
+
+            mock_client.stream = MagicMock(side_effect=get_context_manager)
+
+            await manager.fetch_queue.put(("https://example.com/test.zip", "test.zip"))
+            await manager.fetch_queue.put(None)
+
+            mock_file = AsyncMock()
+            mock_file.__aenter__ = AsyncMock(return_value=mock_file)
+            mock_file.__aexit__ = AsyncMock(return_value=None)
+            mock_file.write = AsyncMock()
+
+            with (
+                patch("aiofiles.open", return_value=mock_file),
+                patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            ):
+                await manager.fetch_worker()
+
+                # Should have retried once (slept once)
+                assert mock_sleep.call_count >= 1
+                # Verify it succeeded after retry
+                assert attempt_counter["count"] == 2
+                # File should have been written successfully after retry
+                assert mock_file.write.call_count > 0
+
+    @pytest.mark.asyncio
+    async def test_fetch_worker_retries_on_5xx_error(
+        self, mock_asyncpg_pool, mock_progress, database_config
+    ):
+        """Test that fetch_worker retries on 5xx server errors."""
+
+        # Share state across retry attempts
+        attempt_counter = {"count": 0}
+
+        class Server5xxStreamResponse:
+            """Mock response that raises 500 error on first attempt, succeeds on second."""
+
+            def raise_for_status(self):
+                attempt_counter["count"] += 1
+                if attempt_counter["count"] == 1:
+                    response = Mock(spec=httpx.Response)
+                    response.status_code = 500
+                    raise httpx.HTTPStatusError(
+                        "Server error", request=MagicMock(), response=response
+                    )
+                # Success on second attempt
+                pass
+
+            async def aiter_bytes(self, chunk_size):
+                yield b"test data"
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                return None
+
+        class Server5xxStreamContextManager:
+            """Mock context manager for 5xx error."""
+
+            async def __aenter__(self):
+                return Server5xxStreamResponse()
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                return None
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mock_client = MagicMock()
+
+            manager = FetchManager(
+                client=mock_client,
+                output_folder=Path(tmpdir),
+                progress=mock_progress,
+                db_pool=mock_asyncpg_pool,
+                db_config=database_config,
+                skip_existing=False,
+            )
+
+            def get_context_manager(*args, **kwargs):
+                return Server5xxStreamContextManager()
+
+            mock_client.stream = MagicMock(side_effect=get_context_manager)
+
+            await manager.fetch_queue.put(("https://example.com/test.zip", "test.zip"))
+            await manager.fetch_queue.put(None)
+
+            mock_file = AsyncMock()
+            mock_file.__aenter__ = AsyncMock(return_value=mock_file)
+            mock_file.__aexit__ = AsyncMock(return_value=None)
+            mock_file.write = AsyncMock()
+
+            with (
+                patch("aiofiles.open", return_value=mock_file),
+                patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            ):
+                await manager.fetch_worker()
+
+                # Should have retried (slept at least once)
+                assert mock_sleep.call_count >= 1
+                # Verify it succeeded after retry
+                assert attempt_counter["count"] == 2
+                # File should be written after retry
+                assert mock_file.write.call_count > 0
+
+    @pytest.mark.asyncio
+    async def test_fetch_worker_no_retry_on_404(
+        self, mock_asyncpg_pool, mock_progress, database_config
+    ):
+        """Test that fetch_worker does NOT retry on 404 errors (non-retryable)."""
+
+        class NotFound404StreamResponse:
+            """Mock response that always raises 404 error."""
+
+            def raise_for_status(self):
+                response = Mock(spec=httpx.Response)
+                response.status_code = 404
+                raise httpx.HTTPStatusError("Not found", request=MagicMock(), response=response)
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                return None
+
+        class NotFound404StreamContextManager:
+            """Mock context manager for 404 error."""
+
+            async def __aenter__(self):
+                return NotFound404StreamResponse()
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                return None
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mock_client = MagicMock()
+            mock_client.stream = MagicMock(return_value=NotFound404StreamContextManager())
+
+            manager = FetchManager(
+                client=mock_client,
+                output_folder=Path(tmpdir),
+                progress=mock_progress,
+                db_pool=mock_asyncpg_pool,
+                db_config=database_config,
+                skip_existing=False,
+            )
+
+            await manager.fetch_queue.put(("https://example.com/notfound.zip", "notfound.zip"))
+            await manager.fetch_queue.put(None)
+
+            with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+                await manager.fetch_worker()
+
+                # Should NOT have retried (no sleep calls)
+                assert mock_sleep.call_count == 0
+
+    @pytest.mark.asyncio
+    async def test_fetch_worker_respects_max_retries(
+        self, mock_asyncpg_pool, mock_progress, database_config
+    ):
+        """Test that fetch_worker respects the maximum retry limit."""
+
+        call_count = {"count": 0}
+
+        class PersistentTimeoutStreamResponse:
+            """Mock response that always times out."""
+
+            def raise_for_status(self):
+                pass
+
+            async def aiter_bytes(self, chunk_size):
+                call_count["count"] += 1
+                raise httpx.TimeoutException("Persistent timeout")
+                # This yield is unreachable but needed to make this an async generator
+                yield  # pragma: no cover
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                return None
+
+        class PersistentTimeoutStreamContextManager:
+            """Mock context manager for persistent timeout."""
+
+            async def __aenter__(self):
+                return PersistentTimeoutStreamResponse()
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                return None
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mock_client = MagicMock()
+            mock_client.stream = MagicMock(
+                return_value=PersistentTimeoutStreamContextManager()
+            )
+
+            manager = FetchManager(
+                client=mock_client,
+                output_folder=Path(tmpdir),
+                progress=mock_progress,
+                db_pool=mock_asyncpg_pool,
+                db_config=database_config,
+                skip_existing=False,
+            )
+
+            await manager.fetch_queue.put(("https://example.com/test.zip", "test.zip"))
+            await manager.fetch_queue.put(None)
+
+            with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+                await manager.fetch_worker()
+
+                # With max_attempts=4, should try 4 times total
+                assert call_count["count"] == 4
+                # Should sleep 3 times (between 4 attempts)
+                assert mock_sleep.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_fetch_worker_logs_retries_at_debug(
+        self, mock_asyncpg_pool, mock_progress, database_config, caplog
+    ):
+        """Test that retry attempts are logged at DEBUG level."""
+        import logging
+
+        # Share state across retry attempts
+        attempt_counter = {"count": 0}
+
+        class TimeoutOnceStreamResponse:
+            """Mock response that times out once then succeeds."""
+
+            def raise_for_status(self):
+                pass
+
+            async def aiter_bytes(self, chunk_size):
+                attempt_counter["count"] += 1
+                if attempt_counter["count"] == 1:
+                    raise httpx.TimeoutException("Timeout")
+                yield b"data"
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                return None
+
+        class TimeoutOnceStreamContextManager:
+            """Mock context manager."""
+
+            async def __aenter__(self):
+                return TimeoutOnceStreamResponse()
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                return None
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mock_client = MagicMock()
+
+            def get_context_manager(*args, **kwargs):
+                return TimeoutOnceStreamContextManager()
+
+            mock_client.stream = MagicMock(side_effect=get_context_manager)
+
+            manager = FetchManager(
+                client=mock_client,
+                output_folder=Path(tmpdir),
+                progress=mock_progress,
+                db_pool=mock_asyncpg_pool,
+                db_config=database_config,
+                skip_existing=False,
+            )
+
+            await manager.fetch_queue.put(("https://example.com/test.zip", "test.zip"))
+            await manager.fetch_queue.put(None)
+
+            mock_file = AsyncMock()
+            mock_file.__aenter__ = AsyncMock(return_value=mock_file)
+            mock_file.__aexit__ = AsyncMock(return_value=None)
+            mock_file.write = AsyncMock()
+
+            with (
+                patch("aiofiles.open", return_value=mock_file),
+                patch("asyncio.sleep", new_callable=AsyncMock),
+                caplog.at_level(logging.DEBUG),
+            ):
+                await manager.fetch_worker()
+
+                # Check that retry was logged at DEBUG level
+                debug_logs = [record for record in caplog.records if record.levelno == logging.DEBUG]
+                retry_logs = [log for log in debug_logs if "Retrying download" in log.message]
+                assert len(retry_logs) > 0
+
+    @pytest.mark.asyncio
+    async def test_fetch_worker_logs_final_failure_at_error(
+        self, mock_asyncpg_pool, mock_progress, database_config, caplog
+    ):
+        """Test that final failures after all retries are logged at ERROR level."""
+        import logging
+
+        class PersistentFailureStreamResponse:
+            """Mock response that always fails."""
+
+            def raise_for_status(self):
+                pass
+
+            async def aiter_bytes(self, chunk_size):
+                raise httpx.TimeoutException("Persistent failure")
+                # This yield is unreachable but needed to make this an async generator
+                yield  # pragma: no cover
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                return None
+
+        class PersistentFailureStreamContextManager:
+            """Mock context manager."""
+
+            async def __aenter__(self):
+                return PersistentFailureStreamResponse()
+
+            async def __aexit__(self, exc_type, exc_val, exc_tb):
+                return None
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mock_client = MagicMock()
+            mock_client.stream = MagicMock(
+                return_value=PersistentFailureStreamContextManager()
+            )
+
+            manager = FetchManager(
+                client=mock_client,
+                output_folder=Path(tmpdir),
+                progress=mock_progress,
+                db_pool=mock_asyncpg_pool,
+                db_config=database_config,
+                skip_existing=False,
+            )
+
+            await manager.fetch_queue.put(("https://example.com/test.zip", "test.zip"))
+            await manager.fetch_queue.put(None)
+
+            with (
+                patch("asyncio.sleep", new_callable=AsyncMock),
+                caplog.at_level(logging.ERROR),
+            ):
+                await manager.fetch_worker()
+
+                # Check that final failure was logged at ERROR level
+                error_logs = [record for record in caplog.records if record.levelno == logging.ERROR]
+                failure_logs = [
+                    log for log in error_logs if "Failed to download" in log.message and "after retries" in log.message
+                ]
+                assert len(failure_logs) > 0
