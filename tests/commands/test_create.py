@@ -1782,7 +1782,6 @@ class TestFetchWorkerRetry:
         self, mock_asyncpg_pool, mock_progress, database_config
     ):
         """Test that fetch_worker retries on timeout errors."""
-
         # Share state across retry attempts
         attempt_counter = {"count": 0}
 
@@ -1859,7 +1858,6 @@ class TestFetchWorkerRetry:
         self, mock_asyncpg_pool, mock_progress, database_config
     ):
         """Test that fetch_worker retries on 5xx server errors."""
-
         # Share state across retry attempts
         attempt_counter = {"count": 0}
 
@@ -1875,7 +1873,6 @@ class TestFetchWorkerRetry:
                         "Server error", request=MagicMock(), response=response
                     )
                 # Success on second attempt
-                pass
 
             async def aiter_bytes(self, chunk_size):
                 yield b"test data"
@@ -1989,7 +1986,6 @@ class TestFetchWorkerRetry:
         self, mock_asyncpg_pool, mock_progress, database_config
     ):
         """Test that fetch_worker respects the maximum retry limit."""
-
         call_count = {"count": 0}
 
         class PersistentTimeoutStreamResponse:
@@ -2021,9 +2017,7 @@ class TestFetchWorkerRetry:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             mock_client = MagicMock()
-            mock_client.stream = MagicMock(
-                return_value=PersistentTimeoutStreamContextManager()
-            )
+            mock_client.stream = MagicMock(return_value=PersistentTimeoutStreamContextManager())
 
             manager = FetchManager(
                 client=mock_client,
@@ -2115,7 +2109,9 @@ class TestFetchWorkerRetry:
                 await manager.fetch_worker()
 
                 # Check that retry was logged at DEBUG level
-                debug_logs = [record for record in caplog.records if record.levelno == logging.DEBUG]
+                debug_logs = [
+                    record for record in caplog.records if record.levelno == logging.DEBUG
+                ]
                 retry_logs = [log for log in debug_logs if "Retrying download" in log.message]
                 assert len(retry_logs) > 0
 
@@ -2154,9 +2150,7 @@ class TestFetchWorkerRetry:
 
         with tempfile.TemporaryDirectory() as tmpdir:
             mock_client = MagicMock()
-            mock_client.stream = MagicMock(
-                return_value=PersistentFailureStreamContextManager()
-            )
+            mock_client.stream = MagicMock(return_value=PersistentFailureStreamContextManager())
 
             manager = FetchManager(
                 client=mock_client,
@@ -2170,15 +2164,16 @@ class TestFetchWorkerRetry:
             await manager.fetch_queue.put(("https://example.com/test.zip", "test.zip"))
             await manager.fetch_queue.put(None)
 
-            with (
-                patch("asyncio.sleep", new_callable=AsyncMock),
-                caplog.at_level(logging.ERROR),
-            ):
+            with patch("asyncio.sleep", new_callable=AsyncMock), caplog.at_level(logging.ERROR):
                 await manager.fetch_worker()
 
                 # Check that final failure was logged at ERROR level
-                error_logs = [record for record in caplog.records if record.levelno == logging.ERROR]
+                error_logs = [
+                    record for record in caplog.records if record.levelno == logging.ERROR
+                ]
                 failure_logs = [
-                    log for log in error_logs if "Failed to download" in log.message and "after retries" in log.message
+                    log
+                    for log in error_logs
+                    if "Failed to download" in log.message and "after retries" in log.message
                 ]
                 assert len(failure_logs) > 0

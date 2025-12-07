@@ -8,8 +8,9 @@ and jitter, specifically designed for handling HTTP errors in the fetch_worker.
 import asyncio
 import logging
 import random
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
 
 import httpx
 
@@ -122,11 +123,7 @@ def calculate_backoff(attempt: int, config: RetryConfig) -> float:
 
 
 async def retry_async(
-    func: Callable,
-    *args: Any,
-    config: RetryConfig,
-    filename: str = "",
-    **kwargs: Any,
+    func: Callable, *args: Any, config: RetryConfig, filename: str = "", **kwargs: Any
 ) -> Any:
     """Execute an async function with retry logic and exponential backoff.
 

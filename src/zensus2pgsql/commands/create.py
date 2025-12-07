@@ -286,22 +286,20 @@ class FetchManager:
 
                 # Extract download logic into an async function for retry
                 async def download_file():
-                    async with self.semaphore:
-                        async with self.client.stream(
+                    async with (
+                        self.semaphore,
+                        self.client.stream(
                             "GET", url, follow_redirects=True, timeout=60.0
-                        ) as response:
-                            response.raise_for_status()
+                        ) as response,
+                    ):
+                        response.raise_for_status()
 
-                            async with aiofiles.open(output_path, "wb") as f:
-                                async for chunk in response.aiter_bytes(chunk_size=8192):
-                                    await f.write(chunk)
+                        async with aiofiles.open(output_path, "wb") as f:
+                            async for chunk in response.aiter_bytes(chunk_size=8192):
+                                await f.write(chunk)
 
                 # Execute with retry logic
-                await retry_async(
-                    download_file,
-                    config=self.retry_config,
-                    filename=filename,
-                )
+                await retry_async(download_file, config=self.retry_config, filename=filename)
 
                 # Only reached if download succeeded
                 self.progress.update(self.fetch_task, advance=1)

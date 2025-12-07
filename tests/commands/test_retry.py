@@ -2,18 +2,12 @@
 Unit tests for retry logic with exponential backoff.
 """
 
-import asyncio
 from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
 
-from zensus2pgsql.retry import (
-    RetryConfig,
-    calculate_backoff,
-    is_retryable_error,
-    retry_async,
-)
+from zensus2pgsql.retry import RetryConfig, calculate_backoff, is_retryable_error, retry_async
 
 
 class TestCalculateBackoff:
@@ -158,12 +152,7 @@ class TestRetryAsync:
     async def test_retry_async_success_after_retry(self):
         """Function succeeds after one retry."""
         # Fail first, then succeed
-        mock_func = AsyncMock(
-            side_effect=[
-                httpx.TimeoutException("Timeout"),
-                "success",
-            ]
-        )
+        mock_func = AsyncMock(side_effect=[httpx.TimeoutException("Timeout"), "success"])
         config = RetryConfig(max_attempts=3, base_delay=0.01)  # Fast retry for testing
 
         with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
@@ -230,7 +219,9 @@ class TestRetryAsync:
     async def test_retry_async_backoff_increases(self):
         """Verify backoff delay increases with each retry."""
         mock_func = AsyncMock(side_effect=httpx.TimeoutException("Timeout"))
-        config = RetryConfig(max_attempts=4, base_delay=1.0, backoff_multiplier=2.0, jitter_range=0.0)
+        config = RetryConfig(
+            max_attempts=4, base_delay=1.0, backoff_multiplier=2.0, jitter_range=0.0
+        )
 
         sleep_delays = []
 
