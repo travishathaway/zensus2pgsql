@@ -707,6 +707,224 @@ class TestExtractWorker:
 
 
 # =============================================================================
+# CSV CACHE MANAGEMENT TESTS
+# =============================================================================
+
+
+class TestCsvCacheManagement:
+    """Tests for CSV caching in extract_worker."""
+
+    @pytest.mark.asyncio
+    async def test_check_csv_cache_miss_no_directory(
+        self, mock_httpx_client, mock_asyncpg_pool, mock_progress, database_config
+    ):
+        """Test cache miss when directory doesn't exist."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manager = FetchManager(
+                client=mock_httpx_client,
+                output_folder=Path(tmpdir),
+                progress=mock_progress,
+                db_pool=mock_asyncpg_pool,
+                db_config=database_config,
+            )
+
+            zip_file = Path(tmpdir) / "test.zip"
+            zip_file.write_bytes(b"fake zip content")
+            result = await manager.check_csv_cache(zip_file)
+            assert result is None
+
+    @pytest.mark.asyncio
+    async def test_check_csv_cache_miss_no_metadata(
+        self, mock_httpx_client, mock_asyncpg_pool, mock_progress, database_config
+    ):
+        """Test cache miss when metadata file is missing."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manager = FetchManager(
+                client=mock_httpx_client,
+                output_folder=Path(tmpdir),
+                progress=mock_progress,
+                db_pool=mock_asyncpg_pool,
+                db_config=database_config,
+            )
+
+            # Create cache dir but no metadata
+            zip_file = Path(tmpdir) / "test.zip"
+            zip_file.write_bytes(b"fake zip content")
+            cache_dir = manager.csv_cache_dir / "test"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+
+            result = await manager.check_csv_cache(zip_file)
+            assert result is None
+
+    @pytest.mark.asyncio
+    async def test_check_csv_cache_hit(
+        self,
+        mock_httpx_client,
+        mock_asyncpg_pool,
+        mock_progress,
+        database_config,
+        temp_zip_with_csv,
+    ):
+        """Test cache hit with valid cached files."""
+        import json
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manager = FetchManager(
+                client=mock_httpx_client,
+                output_folder=Path(tmpdir),
+                progress=mock_progress,
+                db_pool=mock_asyncpg_pool,
+                db_config=database_config,
+            )
+
+            # Create valid cache
+            cache_dir = manager.csv_cache_dir / temp_zip_with_csv.stem
+            cache_dir.mkdir(parents=True)
+
+            csv_path = cache_dir / "test_Gitter.csv"
+            csv_path.write_text("id;name\n1;test\n")
+
+            metadata = {
+                "zip_filename": temp_zip_with_csv.name,
+                "zip_mtime": temp_zip_with_csv.stat().st_mtime,
+                "zip_size": temp_zip_with_csv.stat().st_size,
+                "csv_files": [{"name": "test_Gitter.csv", "size": csv_path.stat().st_size}],
+            }
+
+            meta_path = cache_dir / ".cache_meta.json"
+            meta_path.write_text(json.dumps(metadata))
+
+            result = await manager.check_csv_cache(temp_zip_with_csv)
+            assert result is not None
+            assert len(result) == 1
+            assert result[0] == csv_path
+
+    @pytest.mark.asyncio
+    async def test_check_csv_cache_miss_stale(
+        self,
+        mock_httpx_client,
+        mock_asyncpg_pool,
+        mock_progress,
+        database_config,
+        temp_zip_with_csv,
+    ):
+        """Test cache miss when ZIP file modified."""
+        import json
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manager = FetchManager(
+                client=mock_httpx_client,
+                output_folder=Path(tmpdir),
+                progress=mock_progress,
+                db_pool=mock_asyncpg_pool,
+                db_config=database_config,
+            )
+
+            # Create cache with old mtime
+            cache_dir = manager.csv_cache_dir / temp_zip_with_csv.stem
+            cache_dir.mkdir(parents=True)
+
+            csv_path = cache_dir / "test_Gitter.csv"
+            csv_path.write_text("id;name\n1;test\n")
+
+            # Use old mtime (2 seconds ago)
+            old_mtime = temp_zip_with_csv.stat().st_mtime - 2.0
+
+            metadata = {
+                "zip_filename": temp_zip_with_csv.name,
+                "zip_mtime": old_mtime,
+                "zip_size": temp_zip_with_csv.stat().st_size,
+                "csv_files": [{"name": "test_Gitter.csv", "size": csv_path.stat().st_size}],
+            }
+
+            meta_path = cache_dir / ".cache_meta.json"
+            meta_path.write_text(json.dumps(metadata))
+
+            result = await manager.check_csv_cache(temp_zip_with_csv)
+            assert result is None
+
+    @pytest.mark.asyncio
+    async def test_extract_and_cache_csvs(
+        self,
+        mock_httpx_client,
+        mock_asyncpg_pool,
+        mock_progress,
+        database_config,
+        temp_zip_with_csv,
+    ):
+        """Test extracting and caching CSVs."""
+        import json
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manager = FetchManager(
+                client=mock_httpx_client,
+                output_folder=Path(tmpdir),
+                progress=mock_progress,
+                db_pool=mock_asyncpg_pool,
+                db_config=database_config,
+            )
+
+            result = await manager.extract_and_cache_csvs(temp_zip_with_csv)
+
+            # Verify CSVs were cached
+            assert len(result) > 0
+            cache_dir = manager.csv_cache_dir / temp_zip_with_csv.stem
+            assert cache_dir.exists()
+
+            # Verify metadata was created
+            meta_path = cache_dir / ".cache_meta.json"
+            assert meta_path.exists()
+
+            metadata = json.loads(meta_path.read_text())
+            assert metadata["zip_filename"] == temp_zip_with_csv.name
+            assert len(metadata["csv_files"]) == len(result)
+
+    @pytest.mark.asyncio
+    async def test_extract_worker_uses_cache(
+        self,
+        mock_httpx_client,
+        mock_asyncpg_pool,
+        mock_progress,
+        database_config,
+        temp_zip_with_csv,
+    ):
+        """Test that extract_worker uses cache when available."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manager = FetchManager(
+                client=mock_httpx_client,
+                output_folder=Path(tmpdir),
+                progress=mock_progress,
+                db_pool=mock_asyncpg_pool,
+                db_config=database_config,
+            )
+
+            # First extraction - should cache
+            await manager.extract_queue.put(temp_zip_with_csv)
+            await manager.extract_queue.put(None)
+
+            # Run extract_worker in background
+            extract_task = asyncio.create_task(manager.extract_worker())
+            await asyncio.wait_for(extract_task, timeout=10.0)
+
+            first_count = manager.database_task_total
+
+            # Reset manager for second run
+            manager.database_task_total = 0
+            manager.database_queue = asyncio.Queue()
+
+            # Second extraction - should use cache
+            await manager.extract_queue.put(temp_zip_with_csv)
+            await manager.extract_queue.put(None)
+
+            # Run again
+            extract_task = asyncio.create_task(manager.extract_worker())
+            await asyncio.wait_for(extract_task, timeout=10.0)
+
+            # Should have same number of CSVs queued
+            assert manager.database_task_total == first_count
+
+
+# =============================================================================
 # DATABASE WORKER TESTS
 # =============================================================================
 

@@ -3,6 +3,7 @@
 import typer
 
 from . import __version__
+from .commands.cache import cache_command
 from .commands.create import create
 from .commands.drop import drop
 from .commands.list import list_datasets
@@ -35,6 +36,7 @@ def main(
 
 
 # Add commands directly to the main app
+app.command(name="cache")(cache_command)
 app.command(name="create")(create)
 app.command(name="list")(list_datasets)
 app.command(name="drop")(drop)

@@ -13,9 +13,12 @@ The data it downloads can also be viewed here:
 """
 
 import asyncio
+import json
 import logging
+import shutil
 import tempfile
 import zipfile
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import NamedTuple
 
@@ -135,6 +138,16 @@ async def collect_wrapper(cmd_config: CreateCommandConfig, db_config: DatabaseCo
     if not cmd_config.quiet:
         rprint(f"[cyan]Downloading and importing {len(files_to_import)} Gitterdaten files[/cyan]")
 
+        # Display cache size information
+        from ..cache import format_bytes, get_cache_size
+
+        cache_sizes = get_cache_size()
+        rprint(
+            f"[dim]Cache: {format_bytes(cache_sizes['zip_bytes'])} (ZIPs) + "
+            f"{format_bytes(cache_sizes['csv_bytes'])} (CSVs) = "
+            f"{format_bytes(cache_sizes['total_bytes'])} total[/dim]"
+        )
+
     http_client = httpx.AsyncClient(http2=False)
 
     try:
@@ -195,6 +208,7 @@ class FetchManager:
         self.db_pool = db_pool
         self.db_config = db_config
         self.skip_existing = skip_existing
+        self.csv_cache_dir = Path(CACHE) / "extracted"
 
         # Retry configuration for fetch operations
         self.retry_config = RetryConfig(
@@ -313,11 +327,137 @@ class FetchManager:
             finally:
                 self.fetch_queue.task_done()
 
+    async def check_csv_cache(self, zip_file: Path) -> list[Path] | None:
+        """
+        Check if extracted CSVs exist in cache and are valid.
+
+        Parameters
+        ----------
+        zip_file : Path
+            Path to the ZIP file
+
+        Returns
+        -------
+        list[Path] | None
+            List of cached CSV paths if valid cache exists, None otherwise
+        """
+        # 1. Determine cache directory for this dataset
+        dataset_name = zip_file.stem  # Remove .zip
+        cache_dir = self.csv_cache_dir / dataset_name
+
+        # 2. Quick existence check
+        if not cache_dir.exists():
+            logger.debug(f"Cache miss: directory not found for {dataset_name}")
+            return None
+
+        # 3. Load and validate metadata
+        meta_path = cache_dir / ".cache_meta.json"
+        if not meta_path.exists():
+            logger.debug(f"Cache miss: metadata not found for {dataset_name}")
+            return None
+
+        try:
+            with open(meta_path) as f:
+                metadata = json.load(f)
+        except (json.JSONDecodeError, OSError) as e:
+            logger.debug(f"Cache miss: invalid metadata for {dataset_name}: {e}")
+            return None
+
+        # 4. Validate ZIP staleness (mtime check)
+        zip_mtime = zip_file.stat().st_mtime
+        if abs(zip_mtime - metadata.get("zip_mtime", 0)) > 1.0:  # 1 second tolerance
+            logger.debug(
+                f"Cache miss: ZIP file modified since extraction for {dataset_name} "
+                f"(ZIP mtime: {zip_mtime}, cached: {metadata.get('zip_mtime')})"
+            )
+            return None
+
+        # 5. Validate CSV files exist
+        csv_files = []
+        for csv_meta in metadata.get("csv_files", []):
+            csv_path = cache_dir / csv_meta["name"]
+            if not csv_path.exists():
+                logger.debug(f"Cache miss: CSV file missing for {dataset_name}: {csv_meta['name']}")
+                return None
+            csv_files.append(csv_path)
+
+        # 6. Cache hit!
+        logger.info(f"Cache hit: using {len(csv_files)} cached CSV(s) for {dataset_name}")
+        return csv_files
+
+    async def extract_and_cache_csvs(self, zip_file: Path) -> list[Path]:
+        """
+        Extract CSVs from ZIP and save to cache.
+
+        Parameters
+        ----------
+        zip_file : Path
+            Path to the ZIP file
+
+        Returns
+        -------
+        list[Path]
+            List of extracted CSV paths (in cache)
+        """
+        dataset_name = zip_file.stem
+        cache_dir = self.csv_cache_dir / dataset_name
+
+        try:
+            # 1. Create cache directory
+            cache_dir.mkdir(parents=True, exist_ok=True)
+
+            # 2. Extract to temp location first (existing logic)
+            temp_extract_dir = Path(self.temp_dir.name) / dataset_name
+            await asyncio.to_thread(zipfile.ZipFile(zip_file).extractall, temp_extract_dir)
+
+            # 3. Find CSV files
+            csv_files = list(temp_extract_dir.rglob(self.CSV_FILE_MATCH_PATTERN))
+            logger.debug(f"Found {len(csv_files)} CSV file(s) in {zip_file.name}")
+
+            # 4. Copy CSVs to cache and build metadata
+            cached_csv_paths = []
+            csv_metadata = []
+
+            for csv_file in csv_files:
+                # Copy to cache
+                cached_csv_path = cache_dir / csv_file.name
+                await asyncio.to_thread(shutil.copy2, csv_file, cached_csv_path)
+                cached_csv_paths.append(cached_csv_path)
+
+                # Collect metadata
+                file_stat = cached_csv_path.stat()
+                csv_meta = {"name": csv_file.name, "size": file_stat.st_size}
+                csv_metadata.append(csv_meta)
+
+            # 5. Write metadata file
+            metadata = {
+                "zip_filename": zip_file.name,
+                "zip_mtime": zip_file.stat().st_mtime,
+                "zip_size": zip_file.stat().st_size,
+                "extracted_at": datetime.now(UTC).isoformat(),
+                "csv_files": csv_metadata,
+            }
+
+            meta_path = cache_dir / ".cache_meta.json"
+            with open(meta_path, "w") as f:
+                json.dump(metadata, f, indent=2)
+
+            logger.info(f"Cached {len(cached_csv_paths)} CSV file(s) for {dataset_name}")
+            return cached_csv_paths
+
+        except OSError as e:
+            logger.warning(
+                f"Failed to cache extracted CSVs for {zip_file.name}: {e}. "
+                f"Falling back to temporary extraction."
+            )
+            # Return temp paths instead
+            temp_extract_dir = Path(self.temp_dir.name) / dataset_name
+            csv_files = list(temp_extract_dir.rglob(self.CSV_FILE_MATCH_PATTERN))
+            return csv_files
+
     async def extract_worker(self):
         """
-        Worker that unzips files from the zipfile queue.
-
-        TODO: Add a cache for extracted files so we can skip them if they have been extracted
+        Worker that unzips files and manages CSV cache.
         """
         while True:
             zip_file = await self.extract_queue.get()
@@ -329,13 +469,17 @@ class FetchManager:
                 break
 
             try:
-                logger.info(f"Extracting: {zip_file.name}")
-                extract_to = Path(self.temp_dir.name) / zip_file.name.replace(".zip", "")
-                await asyncio.to_thread(zipfile.ZipFile(zip_file).extractall, extract_to)
+                logger.info(f"Processing: {zip_file.name}")
 
-                csv_files = list(Path(extract_to).rglob(self.CSV_FILE_MATCH_PATTERN))
-                logger.debug(f"Found {len(csv_files)} CSV file(s) in {zip_file.name}")
+                # CHECK CACHE FIRST
+                csv_files = await self.check_csv_cache(zip_file)
 
+                if csv_files is None:
+                    # CACHE MISS: Extract and cache
+                    logger.info(f"Extracting: {zip_file.name}")
+                    csv_files = await self.extract_and_cache_csvs(zip_file)
+
+                # Queue CSVs for database import
                 for csv_file in csv_files:
                     self.database_task_total += 1
                     self.progress.update(self.database_task, total=self.database_task_total)
