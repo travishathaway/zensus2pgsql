@@ -18,7 +18,7 @@ import logging
 import shutil
 import tempfile
 import zipfile
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import NamedTuple
 
@@ -434,7 +434,7 @@ class FetchManager:
                 "zip_filename": zip_file.name,
                 "zip_mtime": zip_file.stat().st_mtime,
                 "zip_size": zip_file.stat().st_size,
-                "extracted_at": datetime.now(UTC).isoformat(),
+                "extracted_at": datetime.now().isoformat(),
                 "csv_files": csv_metadata,
             }
 
