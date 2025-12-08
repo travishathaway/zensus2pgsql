@@ -15,7 +15,7 @@ pip = "*"
 
 [package]
 name = "zensus2pgsql"
-version = "0.1.2"
+version = "0.1.3"
 description = "A Python CLI program that collects Zensus GIS data from Germany and imports it into PostgreSQL"
 license = "GPL-3.0-or-later"
 homepage = "https://github.com/travishathaway/zensus2pgsql"
