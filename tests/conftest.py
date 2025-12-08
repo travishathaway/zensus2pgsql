@@ -80,6 +80,7 @@ class MockAsyncpgConnection:
 
     def __init__(self):
         self.execute = AsyncMock(return_value=None)
+        self.fetch = AsyncMock(return_value=[])
         self.fetchval = AsyncMock(return_value=True)
         self.fetchrow = AsyncMock(return_value=(100, 100, 100, 0))  # All integers
         self.copy_to_table = AsyncMock(return_value=None)
