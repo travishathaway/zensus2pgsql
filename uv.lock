@@ -2040,7 +2040,6 @@ requires-dist = [
     { name = "asyncpg", specifier = ">=0.30.0" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "platformdirs", specifier = ">=4.5.0" },
-    { name = "poethepoet", specifier = ">=0.32.1" },
     { name = "rich", specifier = ">=14.2.0" },
     { name = "typer", specifier = ">=0.15.1" },
     { name = "types-aiofiles", specifier = ">=25.1.0.20251011" },
