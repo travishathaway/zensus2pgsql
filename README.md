@@ -59,6 +59,50 @@ zensus2pgsql create \
 The above command will import two dataset related to the type of heating a house uses and the
 percentage of those who own their home in a particular area.
 
+## Development
+
+This project uses [pixi](https://pixi.sh) for environment and dependency management. All pixi
+configuration lives in `pyproject.toml`.
+
+To get started, [install pixi](https://pixi.sh/latest/#installation), then install the `dev`
+environment and pre-commit hooks:
+
+```sh
+pixi install -e dev
+pixi run -e dev pre-commit install --install-hooks
+```
+
+Run the CLI during development with:
+
+```sh
+pixi run zensus2pgsql --help
+```
+
+Lint the codebase (runs pre-commit on all files):
+
+```sh
+pixi run -e dev lint
+```
+
+Run the test suite with coverage:
+
+```sh
+pixi run -e dev test
+```
+
+The test suite can also be run against a specific supported Python version (3.10-3.14) using the
+matching environment:
+
+```sh
+pixi run -e py312 test
+```
+
+Build the documentation locally:
+
+```sh
+pixi run -e docs docs-serve
+```
+
 ## Contributing
 
 Contributions are welcome and can ake the following forms:

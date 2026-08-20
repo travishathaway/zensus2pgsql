@@ -1,4 +1,4 @@
-[build-system]  # https://docs.astral.sh/uv/concepts/projects/config/#build-systems
+[build-system]  # https://hatch.pypa.io/latest/config/build/
 requires = ["hatchling>=1.29.0"]
 build-backend = "hatchling.build"
 
@@ -22,7 +22,7 @@ dependencies = [
   "types-aiofiles>=25.1.0.20260518",
 ]
 
-[project.scripts]  # https://docs.astral.sh/uv/concepts/projects/config/#command-line-interfaces
+[project.scripts]  # https://packaging.python.org/en/latest/specifications/entry-points/
 zensus2pgsql = "zensus2pgsql.cli:app"
 zpg = "zensus2pgsql.cli:app"
 
@@ -34,30 +34,11 @@ releasenotes = "https://github.com/travishathaway/zensus2pgsql/releases"
 documentation = "https://travishathaway.github.io/zensus2pgsql"
 issues = "https://github.com/travishathaway/zensus2pgsql/issues"
 
-[dependency-groups]  # https://docs.astral.sh/uv/concepts/projects/dependencies/#development-dependencies
-dev = [
-  "commitizen (>=4.16.3)",
-  "coverage[toml] (>=7.14.1)",
-  "ipykernel (>=7.2.0)",
-  "ipython>=8.39.0",
-  "ipywidgets (>=8.1.8)",
-  "mypy (>=2.1.0)",
-  "mkdocs-material (>=9.7.6)",
-  "poethepoet (>=0.46.0)",
-  "pre-commit (>=4.6.0)",
-  "pytest (>=9.0.3)",
-  "pytest-mock (>=3.15.1)",
-  "pytest-xdist (>=3.8.0)",
-  "ruff (>=0.15.15)",
-  "pytest-asyncio>=1.4.0",
-  "pytest-sugar>=1.1.1",
-]
-
 [tool.commitizen]  # https://commitizen-tools.github.io/commitizen/config/
 bump_message = "bump: v$current_version → v$new_version"
 tag_format = "v$version"
 update_changelog_on_bump = true
-version_provider = "uv"
+version_provider = "pep621"
 
 [tool.coverage.report]  # https://coverage.readthedocs.io/en/latest/config.html#report
 precision = 1
@@ -120,50 +101,66 @@ max-doc-length = 100
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
 
-[tool.poe.executor]  # https://github.com/nat-n/poethepoet
-type = "simple"
+[tool.pixi.workspace]  # https://pixi.sh/latest/reference/pixi_manifest/
+channels = ["conda-forge"]
+platforms = ["linux-64", "linux-aarch64", "osx-64", "osx-arm64", "win-64"]
 
-[tool.poe.tasks]
+[tool.pixi.dependencies]
+python = ">=3.10,<4.0"
 
-  [tool.poe.tasks.docs]
-  help = "Build or serve the documentation"
-  shell = """
-    if [ $serve ]
-    then {
-      mkdocs serve
-    } else {
-      mkdocs build
-    } fi
-    """
+[tool.pixi.pypi-dependencies]
+zensus2pgsql = { path = ".", editable = true }
 
-    [[tool.poe.tasks.docs.args]]
-    help = "Serve the documentation locally with live reload"
-    type = "boolean"
-    name = "serve"
-    options = ["--serve"]
+[tool.pixi.feature.dev.pypi-dependencies]
+commitizen = ">=4.16.3"
+coverage = { version = ">=7.14.1", extras = ["toml"] }
+ipykernel = ">=7.2.0"
+ipython = ">=8.39.0"
+ipywidgets = ">=8.1.8"
+mypy = ">=2.1.0"
+pre-commit = ">=4.6.0"
+pytest = ">=9.0.3"
+pytest-asyncio = ">=1.4.0"
+pytest-mock = ">=3.15.1"
+pytest-sugar = ">=1.1.1"
+pytest-xdist = ">=3.8.0"
+ruff = ">=0.15.15"
 
-  [tool.poe.tasks.serve]
-  help = "Serve the app"
+[tool.pixi.feature.dev.tasks]
+lint = "pre-commit run --all-files --color always"
+test-run = "coverage run"
+test-report = { cmd = "coverage report", depends-on = ["test-run"] }
+test-xml = { cmd = "coverage xml", depends-on = ["test-run"] }
+test = { depends-on = ["test-report", "test-xml"] }
 
-    [[tool.poe.tasks.serve.sequence]]
-    cmd = "echo 'Serving app (placeholder)...'"
+[tool.pixi.feature.docs.pypi-dependencies]
+mkdocs-material = ">=9.7.6"
 
-  [tool.poe.tasks.lint]
-  help = "Lint this app"
-  cmd = """
-    pre-commit run
-      --all-files
-      --color always
-    """
+[tool.pixi.feature.docs.tasks]
+docs = "mkdocs build"
+docs-serve = "mkdocs serve"
 
-  [tool.poe.tasks.test]
-  help = "Test this app"
+[tool.pixi.feature.py310.dependencies]
+python = "3.10.*"
 
-    [[tool.poe.tasks.test.sequence]]
-    cmd = "coverage run"
+[tool.pixi.feature.py311.dependencies]
+python = "3.11.*"
 
-    [[tool.poe.tasks.test.sequence]]
-    cmd = "coverage report"
+[tool.pixi.feature.py312.dependencies]
+python = "3.12.*"
 
-    [[tool.poe.tasks.test.sequence]]
-    cmd = "coverage xml"
+[tool.pixi.feature.py313.dependencies]
+python = "3.13.*"
+
+[tool.pixi.feature.py314.dependencies]
+python = "3.14.*"
+
+[tool.pixi.environments]
+default = { solve-group = "default" }
+dev = { features = ["dev"], solve-group = "default" }
+docs = { features = ["docs"] }
+py310 = { features = ["dev", "py310"] }
+py311 = { features = ["dev", "py311"] }
+py312 = { features = ["dev", "py312"] }
+py313 = { features = ["dev", "py313"] }
+py314 = { features = ["dev", "py314"] }

@@ -10,75 +10,77 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Environment Setup
 
-```bash
-# Create and install virtual environment with all dependencies
-uv sync --python 3.13 --all-extras
+This project uses [pixi](https://pixi.sh) for all environment and dependency management. Pixi's
+config lives in `pyproject.toml` under the `[tool.pixi.*]` tables; there is no separate
+`pixi.toml`. Three environments are defined: `default` (runtime only), `dev` (runtime + test/lint
+tooling), and `docs` (runtime + mkdocs-material). `py310`-`py314` environments also exist for
+running the test suite against each supported Python version.
 
-# Activate virtual environment
-source .venv/bin/activate
+```bash
+# Install the dev environment (tests, linters, type checking)
+pixi install -e dev
 
 # Install pre-commit hooks
-pre-commit install --install-hooks
+pixi run -e dev pre-commit install --install-hooks
 ```
 
 ### Running the CLI
 
 ```bash
 # Run CLI during development
-uv run zensus2pgsql --help
-uv run zensus2pgsql list
-uv run zensus2pgsql create [dataset_name]
+pixi run zensus2pgsql --help
+pixi run zensus2pgsql list
+pixi run zensus2pgsql create [dataset_name]
 
 # Run with verbosity flags
-uv run zensus2pgsql create -v           # INFO level
-uv run zensus2pgsql create -vv          # DEBUG level
+pixi run zensus2pgsql create -v           # INFO level
+pixi run zensus2pgsql create -vv          # DEBUG level
 ```
 
 ### Testing and Quality
 
 ```bash
-# Run all available Poe tasks
-poe
-
 # Lint the codebase (runs pre-commit on all files)
-poe lint
+pixi run -e dev lint
 
 # Run tests with coverage
-poe test
+pixi run -e dev test
 
 # Individual test commands
-coverage run                # Run tests
-coverage report             # Show coverage report
-coverage xml                # Generate XML coverage report
+pixi run -e dev test-run                 # Run tests
+pixi run -e dev test-report              # Show coverage report
+pixi run -e dev test-xml                 # Generate XML coverage report
 
 # Type checking
-mypy src
+pixi run -e dev mypy src
+
+# Run tests against a specific Python version (py310-py314)
+pixi run -e py312 test
 ```
 
 ### Documentation
 
 ```bash
 # Build documentation
-poe docs
+pixi run -e docs docs
 
 # Serve documentation locally with live reload
-poe docs --serve
+pixi run -e docs docs-serve
 ```
 
 ### Dependency Management
 
 ```bash
 # Add a runtime dependency
-uv add {package}
+pixi add {package}                       # conda-forge package
+pixi add --pypi {package}                # PyPI-only package
 
 # Add a development dependency
-uv add --dev {package}
+pixi add --feature dev {package}
+pixi add --feature dev --pypi {package}
 
 # Upgrade all dependencies
-uv sync --upgrade
-
-# Upgrade only dev dependencies
-uv sync --upgrade --only-dev
+pixi update
 ```
 
 ### Version Management
