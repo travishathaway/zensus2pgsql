@@ -7,9 +7,15 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import typer.rich_utils
 from typer.testing import CliRunner
 
 from zensus2pgsql.commands.create import DatabaseConfig
+
+# Typer force-enables Rich's colored/styled `--help` output when the GITHUB_ACTIONS env var is
+# set, which breaks tests that assert on raw substrings of CLI output. Disable it unconditionally
+# so `--help` output is deterministic whether tests run locally or in CI.
+typer.rich_utils.FORCE_TERMINAL = False
 
 
 @pytest.fixture
